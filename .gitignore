@@ -1,0 +1,6 @@
+# Sensitive credentials
+search-skills/mineru-extract/.env
+search-skills/credentials.json
+
+# OS files
+.DS_Store
