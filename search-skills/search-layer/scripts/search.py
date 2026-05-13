@@ -478,7 +478,7 @@ def search_grok(
                 "Content-Type": "application/json",
             },
             json=payload,
-            timeout=30,
+            timeout=120,
         )
         r.raise_for_status()
 
