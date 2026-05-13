@@ -2,5 +2,8 @@
 search-skills/mineru-extract/.env
 search-skills/credentials.json
 
+# Logs
+**/.claude/hooks/linter_log/
+
 # OS files
 .DS_Store
