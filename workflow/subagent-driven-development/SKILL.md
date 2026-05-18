@@ -1,11 +1,15 @@
 ---
 name: subagent-driven-development
-description: 在当前会话中执行包含独立 Task 的实现计划时使用
+description: writing-plans 完成后使用——为每个 Task 分派独立子代理并进行两阶段审查
 ---
 
 # Subagent-Driven Development（子代理驱动开发）
 
 通过为每个 Task 分派全新的子代理来执行计划，每个 Task 后进行两阶段审查：先是 spec 合规审查，然后是代码质量审查。
+
+分层结构：Task Group 之间串行；同 Group 内 Task 文件互斥，当前按串行执行；Task 内 Step 严格串行。完整定义参见 writing-plans。
+
+**开始时声明：** "我正在使用 subagent-driven-development 技能执行此计划。"
 
 **为什么使用子代理：** 你将 Task 委托给拥有独立上下文的专用代理。通过精确设定其指令和上下文，确保它们保持专注并成功完成 Task。它们不应继承你会话中的上下文或历史——你只构建它们需要的内容。这也能为你自己的协调工作保留上下文。
 
@@ -60,12 +64,12 @@ digraph process {
         "在计划头部进度清单标记 Task 完成" [shape=box];
     }
 
-    "读取计划（若有 Stage 则按 Stage 顺序加载），提取当前 Group 内 Task 的完整文本，更新进度清单" [shape=box];
+    "读取计划文件，提取当前 Group 内 Task 的完整文本，更新进度清单" [shape=box];
     "还有更多 Task？" [shape=diamond];
     "当前 Group 全部 Task 完成？" [shape=diamond];
     "分派最终代码审查者子代理（整体实现）" [shape=box];
 
-    "读取计划（若有 Stage 则按 Stage 顺序加载），提取当前 Group 内 Task 的完整文本，更新进度清单" -> "分派实现者子代理 (./implementer-prompt.md)";
+    "读取计划文件，提取当前 Group 内 Task 的完整文本，更新进度清单" -> "分派实现者子代理 (./implementer-prompt.md)";
     "分派实现者子代理 (./implementer-prompt.md)" -> "实现者子代理提出问题？";
     "实现者子代理提出问题？" -> "回答问题，提供上下文" [label="是"];
     "回答问题，提供上下文" -> "分派实现者子代理 (./implementer-prompt.md)";
@@ -82,8 +86,15 @@ digraph process {
     "在计划头部进度清单标记 Task 完成" -> "还有更多 Task？";
     "还有更多 Task？" -> "分派实现者子代理 (./implementer-prompt.md)" [label="是，同 Group 内"];
     "还有更多 Task？" -> "当前 Group 全部 Task 完成？" [label="否"];
-    "当前 Group 全部 Task 完成？" -> "读取计划（若有 Stage 则按 Stage 顺序加载），提取当前 Group 内 Task 的完整文本，更新进度清单" [label="否，进入下一 Group", style=dotted];
-    "当前 Group 全部 Task 完成？" -> "分派最终代码审查者子代理（整体实现）" [label="是所有 Stage 已完成"];
+    "当前 Group 全部 Task 完成？" -> "读取计划文件，提取当前 Group 内 Task 的完整文本，更新进度清单" [label="否，进入下一 Group", style=dotted];
+    "当前 Group 全部 Task 完成？" -> "分派最终代码审查者子代理（整体实现）" [label="是，所有 Group 已完成"];
+
+    "分派最终代码审查者子代理（整体实现）" -> "最终审查通过？" [shape=diamond];
+    "最终审查通过？" [shape=diamond];
+    "最终审查通过？" -> "完成" [label="APPROVED"];
+    "最终审查通过？" -> "根据问题创建修复 Task" [label="NEEDS_CHANGES"];
+    "根据问题创建修复 Task" [shape=box];
+    "根据问题创建修复 Task" -> "分派实现者子代理 (./implementer-prompt.md)" [label="走标准 Task 循环"];
 }
 ```
 ```
@@ -98,10 +109,16 @@ digraph process {
 
 **架构、设计与审查 Task**：使用可用的最强模型。
 
+具体模型映射取决于运行环境中可用的模型。如果环境不支持动态切换模型，所有角色使用默认模型。
+
 **Task 复杂度信号：**
 - 涉及 1-2 个文件且有完整 spec → 廉价模型
 - 涉及多个文件且有集成关注点 → 标准模型
 - 需要设计判断或广泛的代码库理解 → 最强模型
+
+## 处理最终审查结果
+
+final-reviewer 返回 NEEDS_CHANGES 时，根据问题列表创建针对性修复 Task，每个修复 Task 走标准的「实现者 → spec 审查 → 代码审查」循环。全部修复 Task 完成后重新分派 final-reviewer，直到返回 APPROVED。
 
 ## 处理实现者状态
 
@@ -117,28 +134,35 @@ digraph process {
 1. 如果是上下文问题，提供更多上下文并用相同模型重新分派
 2. 如果 Task 需要更强的推理能力，使用更强的模型重新分派
 3. 如果 Task 太大，将其拆分为更小的部分
-4. 如果计划本身有问题，升级给用户
+4. 如果计划本身有问题，按回退判断规则升级
 
 **绝不**忽略升级或在没有任何改变的情况下强制同一模型重试。如果实现者说卡住了，就一定有需要改变的地方。
+
+## 回退判断
+
+遇到阻塞时，根据问题根因判断应回退到哪个上游 skill：
+
+- Task 因接口定义不清或组件交互契约缺失而阻塞 → 回退到 grill-with-docs 补充设计
+- Task 因需求范围不明或方向有误而阻塞 → 回退到 brainstorming 重新评估
+- Task 因 Step 描述不足但设计本身没问题 → 回退到 writing-plans 补充计划细节
+- Task 因实现技术难题而阻塞 → 当前层级解决（换模型、拆分 Task、提供更多上下文）
 
 ## 提示词模板
 
 - `./implementer-prompt.md` - 分派实现者子代理
 - `./spec-reviewer-prompt.md` - 分派 spec 合规审查者子代理
 - `./code-quality-reviewer-prompt.md` - 分派代码质量审查者子代理
+- `./final-reviewer-prompt.md` - 分派最终代码审查者子代理（整体实现）
 
 ## 示例工作流程
 
 ```
 你：我正在使用 Subagent-Driven Development 来执行此计划。
 
-[检查计划目录：有 Stage 索引文件，从 Stage 1 开始]
-[读取当前 Stage 文件，理解 Group 划分
-  Group 1: Task 1-1, Task 1-2 (可并行，文件互斥已验证)
+[读取计划文件 docs/plans/2026-05-18-git-hooks.md]
+[理解 Group 划分
+  Group 1: Task 1-1, Task 1-2 (文件互斥已验证)
   Group 2: Task 2-1]
-[更新进度清单标记各 Task 为待办]
-
-========== Stage 1 ==========
 
 --- Group 1 ---
 
@@ -159,31 +183,20 @@ digraph process {
   - 已提交
 
 [分派 spec 合规审查者]
-Spec 审查者：✅ Spec 合规——所有需求已满足，无多余内容
+Spec 审查者：Spec 合规——所有需求已满足，无多余内容
 
 [分派代码质量审查者]
-代码审查者：优势：测试覆盖良好，代码干净。问题：无。通过。
+代码审查者：测试覆盖良好，代码干净。通过。
 
 [在进度清单标记 Task 1-1 完成]
-
-=== Task 1-2：卸载脚本（与 Task 1-1 同 Group，独立文件，可并行） ===
-
-[分派实现者子代理]
-……
-[标记 Task 1-2 完成]
-
---- Group 1 完成，进入 Group 2 ---
-
-=== Task 2-1：集成验证 ===
-
-……
-[标记 Task 2-1 完成]
-
-========== Stage 1 完成，进入 Stage 2 (如有) ==========
+[继续 Task 1-2、Task 2-1...]
 
 [所有 Task 完成后]
 [分派最终代码审查者]
 最终审查者：所有需求已满足，可以合并
+
+[如果当前是某个 Stage 的计划，在 brainstorming 产出文件中标记该 Stage 完成]
+[存在后续 Stage 时向用户交接：「Stage N 已完成，进度清单已更新。下一步需回到 brainstorming 对 Stage N+1 进行续接。是否继续？」]
 
 完成！
 ```
@@ -251,10 +264,18 @@ Spec 审查者：✅ Spec 合规——所有需求已满足，无多余内容
 - 用具体指令分派修复子代理
 - 不要尝试手动修复（会污染上下文）
 
+## SHA 追踪
+
+每个 Task 开始前记录当前 commit SHA，作为该 Task 的 code-quality-reviewer BASE_SHA。首个 Task 开始前的 SHA 同时作为 final-reviewer 的 BASE_SHA。
+
+## 终止状态
+
+所有 Task 完成并通过最终代码审查后，向用户报告结果。如果当前是某个 Stage 的计划且存在未完成的后续 Stage，在 brainstorming 产出文件（`docs/brainstorming/YYYY-MM-DD-<slug>.md`）的 `## Stage 进度` 章节中将当前 Stage 的 `- [ ]` 改为 `- [x]`，不修改文件的其他部分。然后向用户交接：「Stage N 已完成，进度清单已更新。下一步需回到 brainstorming 对 Stage N+1 进行续接。是否继续？」如果无后续 Stage，流程结束。
+
 ## 集成
 
 **相关技能：**
-- **writing-plans 技能** - 创建本技能所执行的计划（产生 Stage — Task Group — Task — Step 层级）
+- **writing-plans 技能** - 创建本技能所执行的计划（产生 Task Group — Task — Step 层级）
 - **code review 流程** - 为审查者子代理提供代码审查规范
 - **test-driven-development 技能** - 子代理在每个 Task 中遵循 TDD
 

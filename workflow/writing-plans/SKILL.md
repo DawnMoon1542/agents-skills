@@ -1,42 +1,34 @@
 ---
 name: writing-plans
-description: 当你有一个需求规格或设计，需要多步骤任务时，在接触代码之前使用
+description: grill-with-docs 完成领域对质后使用——将设计文档转化为可执行的实现计划
 ---
 
 # 编写实现计划
 
 ## 概述
 
-编写全面的实现计划，假设执行者对我们的代码库零上下文、品味存疑。记录他们需要知道的一切：每个 Task 要触及哪些文件、代码、测试、可能需要查阅的文档、如何测试。以小块 Task 的形式给出完整计划。DRY。YAGNI。TDD。频繁提交。
+接收 grill-with-docs 产出的设计文档（含架构、接口定义、错误处理、测试策略），将其转化为全面的实现计划。假设执行者对我们的代码库零上下文、品味存疑。记录他们需要知道的一切：每个 Task 要触及哪些文件、代码、测试、可能需要查阅的文档、如何测试。以小块 Task 的形式给出完整计划。DRY。YAGNI。TDD。频繁提交。
 
 假设他们是熟练的开发者，但几乎不了解我们的工具集或问题领域。假设他们不太了解良好的测试设计。
+
+**输入：** grill-with-docs 产出的设计文档（`docs/grill/YYYY-MM-DD-<slug>.md`，具体路径由上游 grill-with-docs 在交接时提供），以及已更新的 `docs/CONTEXT.md` 术语表。编写计划时使用 CONTEXT.md 中定义的规范术语，保持术语一致性。
 
 **开始时声明：** "我正在使用 writing-plans 技能编写实现计划。"
 
 **上下文：** 如果在隔离工作区中工作，执行时应确保环境准备妥当。
 
-**保存计划到：** 项目约定的计划文档位置；如无约定，保存到 `docs/plans/YYYY-MM-DD-<功能名称>.md`
+**保存计划到：** 项目约定的计划文档位置；如无约定，保存到 `docs/plans/YYYY-MM-DD-<slug>.md`（无 Stage）或 `docs/plans/YYYY-MM-DD-<slug>-stage-N.md`（有 Stage）。沿用 brainstorming 确定的 slug。
 - （用户偏好设置覆盖此默认值）
-- 当计划需要划分 Stage 时，`YYYY-MM-DD-<功能名称>.md` 变为索引文件，每个 Stage 保存为独立文件：`YYYY-MM-DD-<功能名称>-Stage-1.md`、`YYYY-MM-DD-<功能名称>-Stage-2.md`，索引文件列出所有 Stage 的范围摘要和依赖关系
-- 有 Stage 时索引文件与 Stage 文件共存，无 Stage 时是独立的计划文件，两者互斥
 
-## 分层结构：Stage — Task Group — Task — Step
+## 分层结构：Task Group — Task — Step
 
-计划按四层组织。层级越高越粗，越低越细。
+计划按三层组织。层级越高越粗，越低越细。
 
-### Stage（可选）
-
-当需求过于复杂、单一计划文档过长（预估超过 300 行）时，按里程碑或阶段性目标将计划分割为多个 Stage。每个 Stage 独立成文件，文件名 `YYYY-MM-DD-<功能名称>-Stage-N.md`。
-
-- Stage 之间严格串行：Stage 2 在 Stage 1 全部 Task 完成后启动。
-- 每个 Stage 文档拥有独立的头部、进度清单和 Task 列表。
-- 同时创建索引文件 `YYYY-MM-DD-<功能名称>.md`，列出所有 Stage 及其范围摘要、Stage 间依赖关系。
-
-如果 Task 轻量、不需要分割，则不创建 Stage 文件，直接使用单一计划文档。
+> **关于 Stage：** Stage 是 brainstorming 层级的概念，用于将过于复杂的需求分割为多个里程碑，每个 Stage 独立经历完整的 brainstorming→grill→plan→execute 循环。writing-plans 每次只处理一个 Stage（或无 Stage 的完整需求），不在计划层级引入 Stage 拆分。如果收到的设计文档范围仍然过大，应回退要求上游 brainstorming 重新分割 Stage，而非自行拆分。
 
 ### Task Group（N）
 
-Task Group 是将可独立交付的阶段性工作分组的方式。Group 之间串行：Group 2 在 Group 1 所有 Task 完成后才能启动。
+Task Group 是将**可独立交付的工作**分组的方式。Group 之间串行：Group 2 在 Group 1 所有 Task 完成后才能启动。
 
 ### Task（N-M）
 
@@ -55,7 +47,12 @@ Task Group 是将可独立交付的阶段性工作分组的方式。Group 之间
 
 ## 范围检查
 
-如果设计覆盖多个独立子系统，它应该在头脑风暴阶段被分解为多个 Stage。如果没被分解，判断是否需要拆分为多个 Stage——每个 Stage 应产出独立可运行、可测试的软件增量。
+writing-plans 每次只处理一个 Stage 的设计文档。如果收到的设计文档覆盖多个独立子系统且规模过大，不应自行拆分，而应向用户说明问题并建议回退到 brainstorming 阶段重新分割 Stage。
+
+以下信号提示设计文档规模可能过大：
+- 设计文档包含 3 个以上相互独立的子系统
+- 预估 Task 数量超过 15 个
+- 预估计划文档超过 300 行
 
 ## 文件结构
 
@@ -91,6 +88,10 @@ Task Group 是将可独立交付的阶段性工作分组的方式。Group 之间
 **架构：** [2-3 句话描述方案]
 
 **技术栈：** [关键技术/库]
+
+**设计文档：** `docs/grill/YYYY-MM-DD-<slug>.md`
+
+**术语表：** `docs/CONTEXT.md`
 
 ---
 
@@ -163,7 +164,9 @@ Step 之间串行执行。每个 Step 只描述应做什么、要求是什么、
 
 ## 自审
 
-在编写完整计划后，对照设计检查计划。
+在编写完整计划后，使用 [plan-document-reviewer-prompt.md](./plan-document-reviewer-prompt.md) 中的检查项，并对照设计文档检查计划。
+
+内联自审是编写过程中的快速检查，捕捉明显问题。plan-document-reviewer-prompt.md 是完整的审查清单，用于自审通过后的最终验证。两者互补使用：先内联自审，再用 reviewer prompt 全面检查。
 
 **1. 设计覆盖：** 浏览设计中的每个章节/需求。能否指出哪个 Task 实现它。列出任何缺口。
 
@@ -179,13 +182,15 @@ Step 之间串行执行。每个 Step 只描述应做什么、要求是什么、
 
 保存计划后，提供执行选择：
 
-**"计划文档已保存到 `docs/plans/`。两种执行选项：**
+**"计划文档已保存到 `docs/plans/YYYY-MM-DD-<slug>.md`。两种执行选项：**
 
-**1. Subagent 驱动（推荐）** - 每个 Task 分派一个全新的 subagent，Task 间进行审查，快速迭代
+**1. Subagent 驱动（推荐）** — 每个 Task 全新 subagent + 两阶段审查（spec 合规 + 代码质量）。Task 之间不暂停，仅在无法解决的阻塞时停止。适合无需人工逐步介入的场景。
 
-**2. 会话内执行** - 在当前会话中使用 executing-plans 技能执行，批量执行配合检查点
+**2. 会话内执行** — 在当前会话直接执行。遇到模糊描述或阻塞时停止寻求帮助。不含独立审查环节，依赖用户在场监督。适合需要人工随时调整方向的场景。
 
-**选择哪种方式？"**
+**选择哪种方式？"
+
+如果用户在之前的 Stage 中已选择执行模式，沿用该选择，不再重复询问。**
 
 **如果选择 Subagent 驱动：**
 - 调用 subagent-driven-development 技能
@@ -193,4 +198,4 @@ Step 之间串行执行。每个 Step 只描述应做什么、要求是什么、
 
 **如果选择会话内执行：**
 - 调用 executing-plans 技能
-- 批量执行配合审查检查点
+- 在当前会话执行，遇阻塞时停下询问
