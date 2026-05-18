@@ -11,10 +11,12 @@ Convert a verbose Markdown document into a single, self-contained HTML file that
 ## Usage
 
 ```
-/md2html <file.md>             # output <file>.html next to source
+/md2html <file.md>             # output .html at same path as source .md
 /md2html <file.md> --out X.html # custom output path
 /md2html                       # if no arg, ask user which file
 ```
+
+**Output path rule**: By default, the output .html file is written to the same directory as the source .md, with the same basename but `.html` extension. E.g. `docs/release-notes-v1.md` → `docs/release-notes-v1.html`.
 
 ## Skill files (resolved relative to this SKILL.md)
 
@@ -73,31 +75,81 @@ Do this analysis silently in your head (or as one short summary line to the user
   - long appendix → Collapsible
   - everything else → plain `<h2>` + `<p>`
 
-### Step 3 — Build the output HTML
+### Step 3 — Build the output HTML (segmented, for reliability)
 
-1. **Copy** the full `template.html` content into a string. Do NOT use Read-then-Edit on a file you haven't created; instead, build the output buffer in memory then `Write` once.
-2. **Replace placeholders** in the template (all values come from Step 2 analysis, language-matched):
+To prevent tool call failures on large documents, build the HTML in multiple segments rather than a single `Write`. Use bash `cat >>` to append content pieces sequentially. The overall structure is:
+
+```
+┌─ Phase 1: Write skeleton prefix (head, topbar, TOC, doc header)
+├─ Phase 2: Write each content section (append with cat >>)
+├─ Phase 3: Write skeleton suffix (footer, scripts, closing tags)
+└─ Phase 4: Insert TOC entries (a single edit() call)
+```
+
+#### Phase 1: Write skeleton prefix
+
+1. **Copy** the full `template.html` content into a string. Do NOT use Read-then-Edit.
+2. **Replace all placeholders EXCEPT `{{TOC_TITLE}}`-related ones and content body** (all values come from Step 2 analysis, language-matched):
    - `{{LANG}}` → ISO 639-1 code: `en` / `vi` / `zh` / `ja` / `ko` / `es` / …
-   - `{{REC_LABEL}}` → text shown on the "Recommended" comparison-card badge, e.g. `★ Recommended` / `★ Đề xuất` / `★ 推荐` / `★ 추천`. Sets the `--rec-label` CSS variable on `<html>`. If you forget this, CSS falls back to `★ Recommended`.
+   - `{{REC_LABEL}}` → text shown on the "Recommended" comparison-card badge
    - `{{TITLE}}` (appears twice: `<title>` and `.doc-title`)
    - `{{SUBTITLE}}`
    - `{{DOC_TYPE}}` → universal uppercase code: `PLAN`, `SPEC`, `SYSTEM DESIGN`, `RFC`, `RUNBOOK`, `POSTMORTEM`, `BRAINSTORM`, `NOTES`
    - `{{SOURCE_FILE}}` → basename of source (e.g. `plan.md`)
    - `{{DATE}}` → ISO date or localized "Updated <today>"
-   - `{{READ_TIME}}` → localized reading time, e.g. `~3 min read` / `~3 phút đọc` / `~3 分钟阅读`
+   - `{{READ_TIME}}` → localized reading time
    - `{{BRAND_LABEL}}` → localized doc-type label for the topbar
-   - `{{TOC_TITLE}}` → localized "Contents" (also used as `aria-label` for the TOC drawer)
    - `{{PRINT_TOOLTIP}}` → localized print tooltip
    - `{{THEME_TOOLTIP}}` → localized theme-toggle tooltip
-   - `{{CLOSE_LABEL}}` → localized "Close" (used for the mobile TOC drawer close button), e.g. `Close` / `Đóng` / `关闭` / `閉じる`
-   - `{{SKIP_LINK_LABEL}}` → localized skip-to-content link text, e.g. `Skip to content` / `Bỏ qua menu` / `跳到正文`
-   - `{{FOOTER_NOTE}}` → localized source attribution (e.g. `Source: plan.md` / `Nguồn: plan.md` / `来源: plan.md`)
-3. **Replace `<!-- TOC_ENTRIES -->`** with one `<a>` per H2/H3 (see §2 in components.md). Generate stable kebab-case `id` from heading text.
-4. **Replace the slot between `<!-- CONTENT_START -->` and `<!-- CONTENT_END -->`** with the document body, section by section, using components from `components.md`. Each section must:
-   - Start with `<h2 id="..."> ` (matching the TOC entry).
-   - Use ONE primary component per logical chunk (don't stack 3 callouts in a row).
-   - Preserve original meaning — do not summarize away technical detail; condense only filler/repetition.
-5. **Write** the assembled HTML to the output path.
+   - `{{CLOSE_LABEL}}` → localized "Close"
+   - `{{SKIP_LINK_LABEL}}` → localized skip-to-content link text
+   - `{{FOOTER_NOTE}}` → localized source attribution
+3. **Trim the template to prefix only**: keep everything from `<!DOCTYPE html>` through `<!-- CONTENT_START -->` (inclusive). Remove everything from `<!-- CONTENT_END -->` onward (footer, `</main>`, `</div>`, scripts, `</html>`). Keep these removed parts aside as the "suffix".
+4. **Replace TOC entries**: in the prefix, replace `<!-- TOC_ENTRIES -->` with one `<a>` per H2/H3 (see §2 in components.md).
+5. **Write** the prefix to the output path with `Write` tool.
+
+#### Phase 2: Write content sections (append)
+
+For each content section (identified in Step 2's section map), **append** its HTML to the output file using bash:
+
+```bash
+cat >> <output>.html << 'SECTION_EOF'
+<!-- your section HTML here -->
+SECTION_EOF
+```
+
+Guidelines per section:
+- Start with `<h2 id="...">` or `<h3 id="...">` (matching the TOC entry).
+- Use ONE primary component per logical chunk (don't stack 3 callouts in a row).
+- Preserve original meaning — do not summarize away technical detail; condense only filler/repetition.
+- Use `cat >>` heredoc with a unique delimiter (e.g. `SECTION_EOF`, `SECTION_2_EOF`) — always use `'DELIMITER'` (quoted) to prevent shell variable expansion.
+- After writing each section, run verification: re-read just that section (one quick sanity check) before moving to the next.
+
+#### Phase 3: Write skeleton suffix (append)
+
+Append the saved suffix (from `<!-- CONTENT_END -->` to `</html>` inclusive) using the same bash `cat >>` method:
+
+```bash
+cat >> <output>.html << 'SUFFIX_EOF'
+<!-- CONTENT_END -->
+
+      <footer class="doc-footer">
+        <span>Generated by <a href="#">md2html</a></span>
+        <span>{{FOOTER_NOTE}}</span>
+      </footer>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script>
+    ... (boot script) ...
+  </script>
+</body>
+</html>
+SUFFIX_EOF
+```
+
+> **Why bash `cat >>` instead of `edit`?** The `edit` tool matches against the original file content, not incrementally — chained edits targeting the same file would fail. Bash heredoc append (`cat >> file.html << 'DELIM'`) reliably appends text without shell expansion interference.
 
 ### Step 4 — Verify
 
@@ -150,7 +202,8 @@ The only external dependency is `mermaid` via CDN (resolved at HTML open time, n
 
 ## Anti-patterns
 
-- ❌ Generating the HTML in many small Edit calls — produces drift. Build full string, Write once.
+- ❌ Generating the HTML in many small Edit calls — `edit` matches against original file content, not incrementally; chained edits will conflict. Use bash `cat >>` for progressive append instead.
+- ❌ Writing the entire HTML in a single `Write` call for very large documents — the tool may fail on oversized payloads. Split into prefix (Write) + content sections (bash append) + suffix (bash append).
 - ❌ Adding new CSS via `<style>` — extend `template.html` instead and tell the user.
 - ❌ Translating proper nouns or code identifiers.
 - ❌ "Improving" the source by adding info not in the original.
