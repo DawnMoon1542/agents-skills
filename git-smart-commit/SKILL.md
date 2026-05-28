@@ -138,21 +138,11 @@ Commit Message：
 
 <中文正文>
 ---
-
-[按 Y 确认提交 / 按 N 取消 / 按 E 修改 commit message]
-```
+``
 
 ### 5.1 用户确认
 
-使用 `AskUserQuestions` 工具询问用户，提供三个选项：
-
-- `confirm` — 确认提交，执行 git commit
-- `cancel` — 取消，不做任何操作
-- `edit` — 用户提供修改后的 commit message，用用户提供的版本提交
-
-### 5.2 修改响应
-
-若用户选择 edit，记录用户提供的文本，后续步骤使用用户版本提交。
+向用户询问下一步操作：confirm, edit, cancel
 
 ## 6. 执行提交
 
@@ -210,10 +200,7 @@ Commit Message：
 ---
 feat: 消息合并去重，新增 MessageTurn 接口与 mergeTurnSteps
 
-- src/protocol/message.ts：新增 MessageTurn 接口和 mergeTurnSteps 工具函数
-- src/renderer/index.ts：deriveRenderableContent 增加按 ID 去重逻辑
-- tests/protocol/message.test.ts：补充 mergeTurnSteps 正常与边界测试用例
-- tsconfig.json：新增 @protocol 路径别名
+新增 MessageTurn 接口和工具函数，增加按 ID 去重逻辑，补充 mergeTurnSteps 正常与边界测试用例，新增 @protocol 路径别名
 ---
 ```
 
@@ -230,7 +217,7 @@ Commit Message：
 ---
 fix: 修复登录超时不显示错误提示
 
-- src/services/auth.ts：catch 块中增加错误信息返回逻辑
+catch 块中增加错误信息返回逻辑
 ---
 ```
 
