@@ -22,9 +22,10 @@ Convert a verbose Markdown document into a single, self-contained HTML file that
 
 - `template.html`   — HTML skeleton with embedded CSS (Claude orange light+dark), Mermaid CDN, theme toggle, TOC sidebar, footer. Contains `{{PLACEHOLDER}}` strings and `<!-- COMMENT -->` slots.
 - `components.md`  — catalog of HTML snippets you must copy verbatim (step cards, callouts, mermaid blocks, pros-cons, comparison cards, collapsibles).
+- `latex.md`       — LaTeX / KaTeX rendering rules. Read this file only when the source document contains formulas or formula-like technical expressions.
 - `examples/`     — at least one reference `<doc>.md` → `<doc>.html` pair. Read one to calibrate output quality before starting.
 
-**You MUST read all three before writing output.** Do not invent CSS classes or skip the catalog.
+**You MUST read `template.html`, `components.md`, and one example pair before writing output.** If formulas are present, you MUST also read `latex.md`. Do not invent CSS classes or skip the catalog.
 
 ## What you must do when invoked
 
@@ -36,6 +37,7 @@ Follow these steps in order. Do not skip.
 2. Read the source `.md` fully.
 3. Read `template.html` and `components.md` from the same directory as this SKILL.md.
 4. Read one example pair under `examples/` to calibrate.
+5. If the source document contains formulas or formula-like technical expressions, read `latex.md` from the same directory as this SKILL.md before generating HTML.
 
 ### Step 2 — Analyze the source document
 
@@ -74,6 +76,7 @@ Do this analysis silently in your head (or as one short summary line to the user
   - warnings/decisions → Callouts
   - long appendix → Collapsible
   - everything else → plain `<h2>` + `<p>`
+- **Math / LaTeX usage** — detect whether the source contains formulas or formula-like technical expressions. If yes, follow `latex.md` for formula conversion, KaTeX injection, rendering rules, and verification.
 
 ### Step 3 — Build the output HTML (segmented, for reliability)
 
@@ -157,7 +160,7 @@ After writing, do ONE quick sanity check by re-reading just the section you gene
 - Every `id="..."` referenced in the TOC exists on a heading.
 - No leftover `{{PLACEHOLDER}}` strings.
 - Mermaid blocks have valid syntax (use `flowchart`, `sequenceDiagram`, `erDiagram`, `stateDiagram-v2`, or `gantt` — never bare `graph` without direction).
-- No `<script>` tags added beyond what `template.html` already includes.
+- No `<script>` tags added beyond what `template.html` already includes, except the KaTeX assets allowed by `latex.md` when formulas are present.
 
 After verification passes, **automatically open the output file** in the user's default browser:
 - macOS: `open <file>.html`
@@ -174,12 +177,13 @@ Then report back to the user with:
 3. **Mermaid > prose for any flow ≥ 3 hops.** If the source says "A gọi B, B gọi C, C ghi DB", make a diagram.
 4. **Key-point highlights are rare.** Max 1 per H2 section, ideally 2-3 total per document.
 5. **UI text follows the detected source language** — including for non-EN/non-VI sources (Chinese, Japanese, Korean, Spanish, etc). Use the language sample table in Step 2 or translate equivalently. Code, commands, file names, library names, error messages stay verbatim regardless of language.
-6. **Self-contained output.** No external file references except the CDN scripts already in `template.html`.
+6. **External assets are restricted.** No external file references except the CDN scripts already in `template.html`. If and only if the source contains formulas, follow `latex.md` for the allowed KaTeX assets.
 7. **Do not modify `template.html` or `components.md`** — those are the skill's source of truth. Only Write the output `.html`.
 8. **Use SVG icons only — never emojis.** Every icon is `<svg class="..."><use href="#i-NAME"/></svg>` referencing the sprite at the top of `<body>`. See §13 in `components.md` for the catalog. No emoji glyphs anywhere in callouts, doc-meta, topbar, or body content.
 9. **Anchor links and copy-to-clipboard auto-inject via JS** — do NOT add them manually. Just give H2/H3 a proper `id`, and put code in `<pre><code>`. The template's boot script handles the rest.
 10. **Wrap wide tables in `.table-wrap`** — see components.md §14b. Tables ≥ 4 columns or with long cells need the wrapper for mobile scroll.
 11. **Use `<figure>` + `<figcaption>` for images** with descriptive `alt`. See components.md §14a.
+12. **LaTeX formulas must remain semantic text.** When formulas are present, use LaTeX delimiters and KaTeX rendering as defined in `latex.md`; do not convert formulas to images, SVG drawings, screenshots, or vague prose.
 
 ## Cross-AI compatibility
 
@@ -189,7 +193,7 @@ This skill is designed to run identically on:
 - **Codex CLI** — copy `SKILL.md` content to `~/.codex/prompts/md2html.md`, keep `template.html` and `components.md` at a stable absolute path, update the file references in SKILL.md if needed. Invoke with `/md2html`.
 - **Antigravity** — add SKILL.md as a custom prompt/agent instruction, ensure the agent has Read/Write tool access to the skill folder.
 
-The only external dependency is `mermaid` via CDN (resolved at HTML open time, not at skill execution time). No npm/pip install required for the skill itself.
+The default external dependency is `mermaid` via CDN (resolved at HTML open time, not at skill execution time). When formulas are present, `latex.md` defines the optional KaTeX CDN assets used for LaTeX rendering. No npm/pip install is required for the skill itself.
 
 ## Edge cases
 
