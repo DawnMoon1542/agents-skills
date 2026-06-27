@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{LANG}}" data-theme="light" style="--rec-label: '{{REC_LABEL}}'">
+<html lang="{{LANG}}"{{DIR_ATTR}} data-theme="light" style="--rec-label: '{{REC_LABEL}}'">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -442,6 +442,56 @@
       color: var(--code-text);
       font-size: inherit;
     }
+    .content pre code.hljs {
+      display: block;
+      padding: 0;
+      background: transparent;
+      color: var(--code-text);
+    }
+    .hljs-keyword,
+    .hljs-selector-tag,
+    .hljs-built_in,
+    .hljs-name,
+    .hljs-tag {
+      color: var(--decision);
+    }
+    .hljs-string,
+    .hljs-title,
+    .hljs-section,
+    .hljs-attribute,
+    .hljs-literal,
+    .hljs-template-variable,
+    .hljs-variable {
+      color: var(--success);
+    }
+    .hljs-number,
+    .hljs-symbol,
+    .hljs-bullet,
+    .hljs-link {
+      color: var(--accent-strong);
+    }
+    .hljs-comment,
+    .hljs-quote,
+    .hljs-meta {
+      color: var(--text-subtle);
+      font-style: italic;
+    }
+    .hljs-type,
+    .hljs-class .hljs-title,
+    .hljs-params {
+      color: var(--info);
+    }
+    .hljs-attr,
+    .hljs-property,
+    .hljs-doctag {
+      color: var(--warn);
+    }
+    .hljs-deletion {
+      color: var(--danger);
+    }
+    .hljs-addition {
+      color: var(--success);
+    }
     .copy-btn {
       position: absolute;
       top: 8px; right: 8px;
@@ -611,6 +661,19 @@
       white-space: pre-wrap;
       text-align: left;
     }
+
+    .katex-display {
+      margin: 16px 0;
+      padding: 6px 0;
+      overflow-x: auto;
+      overflow-y: visible;
+    }
+    .katex-display > .katex {
+      display: inline-block;
+      line-height: 1.35;
+      padding: 2px 0;
+    }
+    .katex { font-size: 1.05em; }
 
     /* ============================================================
        PROS / CONS
@@ -898,6 +961,7 @@
       .doc-footer { break-before: avoid; }
     }
   </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 </head>
 <body>
   <!-- Skip link for keyboard users -->
@@ -1000,6 +1064,9 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
   <script>
     // ---------- Theme ----------
     const STORAGE_KEY = "md2html-theme";
@@ -1125,6 +1192,28 @@
       });
     }
 
+    // ---------- Syntax highlighting ----------
+    function applyCodeHighlight() {
+      if (!window.hljs) return;
+      document.querySelectorAll(".content pre code[class^='language-']").forEach(code => {
+        if (code.dataset.highlighted === "yes") return;
+        hljs.highlightElement(code);
+      });
+    }
+
+    // ---------- KaTeX ----------
+    function renderKatexMath() {
+      if (!window.renderMathInElement) return;
+      renderMathInElement(document.body, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "\\(", right: "\\)", display: false },
+          { left: "\\[", right: "\\]", display: true },
+        ],
+        throwOnError: false,
+      });
+    }
+
     // ---------- Scroll progress ----------
     function setupScrollProgress() {
       const bar = document.getElementById("scroll-progress");
@@ -1142,6 +1231,8 @@
     document.addEventListener("DOMContentLoaded", () => {
       applyThemeIcon();
       injectAnchors();
+      applyCodeHighlight();
+      renderKatexMath();
       injectCopyButtons();
       renderMermaid();
       setupTocSpy();

@@ -377,6 +377,62 @@ These render correctly out-of-the-box with the CSS in `template.html` — just u
 | `--- table ---` | `<table>...</table>` |
 | `[text](url)` | `<a href="url">text</a>` |
 
+### 10a. Code blocks
+
+Use fenced-code HTML for source code, shell commands, config snippets, SQL, JSON, YAML, and logs. Preserve language identifiers when the source has them.
+
+```html
+<pre><code class="language-ts">type RetryPolicy = {
+  attempts: number;
+  backoffMs: number[];
+};
+
+const policy: RetryPolicy = {
+  attempts: 6,
+  backoffMs: [1000, 4000, 16000, 64000, 256000, 1024000],
+};</code></pre>
+```
+
+```html
+<pre><code class="language-sql">CREATE INDEX CONCURRENTLY idx_events_status_created_at
+ON events (status, created_at)
+WHERE status = 'pending';</code></pre>
+```
+
+- Escape `<`, `>`, and `&` inside code blocks.
+- Do not add copy buttons manually; `template.html` injects them.
+- Do not wrap Mermaid diagrams in `<code>`; use §6 instead.
+- Do not wrap renderable formulas in `<code>`; use §10b instead.
+
+### 10b. LaTeX formulas
+
+Use these snippets when the source contains formulas or formula-like technical expressions. `template.html` already loads KaTeX and renders `\(...\)`, `\[...\]`, and `$$...$$` delimiters.
+
+Inline formula inside prose:
+
+```html
+<p>响应比为 \(\frac{等待时间+服务时间}{服务时间}\)，数值越高表示调度优先级越高。</p>
+```
+
+Standalone display formula:
+
+```html
+<div>$$
+Need = Max - Allocation
+$$</div>
+```
+
+Formula with summation:
+
+```html
+<p>任务集满足 Liu-Layland 近似条件时，利用率应满足 \(\sum_{i=1}^{m}\frac{C_i}{P_i}\le m(2^{1/m}-1)\)。</p>
+```
+
+- Keep formulas as semantic text, not images.
+- Use `\(...\)` for inline formulas so currency values are not mistaken for math.
+- Do not put formulas in headings, `alt` text, Mermaid blocks, or HTML attributes.
+- Read `latex.md` for formula detection, conversion, and verification rules.
+
 ---
 
 ## 11. Component selection cheatsheet

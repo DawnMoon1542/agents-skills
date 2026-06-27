@@ -19,7 +19,7 @@ Your AI just produced 2,000 words of system design. Beautiful logic, careful tra
 
 ## What this skill does
 
-You type `/md2html anydoc.md`. Your agent reads the file, opens `template.html` + `components.md` from this repo, and writes one polished HTML file next to the source. No build step, no server, no Node, no Python.
+You type `/md2html anydoc.md`. Your agent reads the source, `components.md`, and one body-only example pair, then copies `template.html` to a polished HTML file next to the source. No build step, no server, no Node, no Python.
 
 Works on anything long-form your AI hands you:
 
@@ -37,8 +37,8 @@ It's not a Markdown-to-HTML converter. **It's an analyzer.** The agent decides w
 
 - **Reads like a product page, not a spec.** Sidebar TOC with scroll-spy, anchor links on every heading, copy-to-clipboard on every code block, a scroll progress bar at the top. Things you'd build into a real docs site.
 - **Diagrams instead of paragraphs.** Three-hop flows automatically become Mermaid `flowchart` blocks. Trade-off discussions become side-by-side comparison cards. The agent decides — you don't write any of it.
-- **One file. Email it. Drop it in Slack. Open it on a plane.** Self-contained HTML with embedded CSS and theme JS. The only network request is the Mermaid CDN, and you can inline that too if you care.
-- **Zero install for your users.** No `npm install`. No Docker. The whole skill is three markdown/HTML files. Anyone with an AI agent and `git clone` can use it in under a minute.
+- **One file. Email it. Drop it in Slack. Open it on a plane.** Self-contained HTML with embedded CSS and theme JS. Runtime rendering uses CDN assets for Mermaid, Highlight.js, and KaTeX.
+- **Zero install for your users.** No `npm install`. No Docker. The whole skill is a prompt, a template, component rules, and examples. Anyone with an AI agent and `git clone` can use it in under a minute.
 - **Portable across agents.** Works the same way in Claude Code, Codex CLI, Antigravity, Cursor, Continue.dev — anywhere an agent can read a file and write a file. No agent-specific code.
 - **Source language → output language, automatically.** Vietnamese spec? Vietnamese UI. Chinese plan? `目录` instead of `Contents`. Eight languages built into the label table; the agent fills in any other language by translation.
 - **Production-grade UX, not a weekend hack.** WCAG AA contrast, ≥ 40 px touch targets, `prefers-reduced-motion`, focus-visible rings, mobile TOC drawer with backdrop and ESC-to-close, skip-to-content link, full print stylesheet. Reviewed by a UI/UX engineer who didn't pull punches.
@@ -99,6 +99,8 @@ The agent picks components based on what's actually in the doc:
 | "Option A vs B vs C"                            | Comparison cards (with ★ Recommended) |
 | "Don't do X" / "Must do Y"                      | Danger / decision callout             |
 | Long appendix or code dump                      | Collapsible deep-dive panel           |
+| Code snippets                                   | Highlighted code block with copy      |
+| Formula-like technical expressions              | KaTeX-rendered LaTeX formula          |
 | Key conclusion                                  | Accent-bordered highlight box         |
 
 ## Multi-language
@@ -107,7 +109,7 @@ UI labels follow the source. The label table covers **English, Vietnamese, Chine
 
 ## Demo
 
-See [`examples/example-plan.md`](examples/example-plan.md) (Vietnamese source) → [`examples/example-plan.html`](examples/example-plan.html) (rendered). The screenshots at the top of this README are from a longer test spec — a game economy design doc.
+See [`examples/example-plan.md`](examples/example-plan.md) → [`examples/example-plan.html`](examples/example-plan.html). The HTML example intentionally keeps only the body fragment inserted between `<!-- CONTENT_START -->` and `<!-- CONTENT_END -->`; template CSS and scripts live in `template.html`. The screenshots at the top of this README are from a longer test spec — a game economy design doc.
 
 ## Customize the theme
 
@@ -138,9 +140,10 @@ rm -rf ~/.claude/skills/md2html
 ```
 md2html/
 ├── SKILL.md         # Instructions the agent loads on /md2html
-├── template.html    # HTML skeleton: CSS + Mermaid + theme JS
+├── template.html    # HTML skeleton: CSS + Mermaid + Highlight.js + KaTeX + theme JS
 ├── components.md    # Component catalog the agent assembles from
-├── examples/        # Reference .md → .html pair (gold standard)
+├── latex.md         # Formula writing and verification rules
+├── examples/        # Reference .md → body-fragment .html pair
 ├── docs/            # Screenshots for this README
 ├── LICENSE
 └── README.md

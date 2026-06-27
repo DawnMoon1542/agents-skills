@@ -84,6 +84,17 @@ When a webhook call fails, the router retries with exponential backoff: 1s, 4s, 
 
 Reference: https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
 
+## Technical detail: retry implementation
+
+The router computes the retry delay from the attempt number:
+
+```ts
+const retryDelayMs = (attempt: number) => Math.min(1000 * 4 ** attempt, 1024000);
+const idempotencyKey = sha256(`${event.id}:${event.channel}:${event.recipient}`);
+```
+
+The cumulative retry wait after six failures is \(1 + 4 + 16 + 64 + 256 + 1024 = 1365\) seconds. In general, the retry delay is \(d_n = \min(1000 \times 4^n, 1024000)\) milliseconds.
+
 ## Summary
 
 Switching from polling to webhooks cuts 99% of latency and 60% of DB load in exchange for a moderate increase in operational complexity. A five-week plan with one week of monitoring before cutover keeps rollback safe.
