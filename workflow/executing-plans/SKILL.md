@@ -1,107 +1,164 @@
 ---
 name: executing-plans
-description: writing-plans 完成后可选使用——在当前会话中逐 Task 执行实现计划，遇阻塞时停下询问
+description: 由 smart-exec-plan 调用——解析全部 Stage 计划，按 Stage、Task Group、Task、Step 顺序持续推进并维护进度
 ---
 
-# 执行计划
+# 解析并推进实现计划
 
-## 概述
+本技能负责计划读取、复核、定位和推进，不管理分支、提交或合并。Git 操作由 smart-exec-plan 统一控制，Task 实现与审查由 subagent-driven-development 执行。
 
-加载计划，批判性复核，按 Task Group — Task — Step 层级执行，完成后报告。Step 包含的是需求描述而非可直接复制的代码，执行时需要根据规格自行编写实现。
+**开始时声明：** “我正在使用 executing-plans 技能解析并推进全部 Stage 计划。”
 
-分层结构：Task Group 之间串行；同 Group 内 Task 文件互斥，当前按串行执行；Task 内 Step 严格串行。完整定义参见 writing-plans。
+## 输入
 
-**开始时声明：** "我正在使用 executing-plans 技能实现此计划。"
+从 brainstorming 索引读取按顺序排列的全部计划文件。每个计划对应一个 Stage。
 
-**质量保障：** 会话内执行模式不含独立审查环节（与 subagent-driven-development 的多层审查不同），依赖用户在场监督。建议在每个 Task Group 完成后暂停，由用户或手动调用 code-review 技能进行检查。
+同时读取：
 
-## 执行流程总览
+- brainstorming 需求索引
+- 当前 Stage 的设计文件
+- CONTEXT 或对应 context 文件
+- 当前 Stage 计划
+- 前序 Stage 计划和完成状态
 
-```
-加载计划文件 → 探索工作区 → 批判性复核 → 执行循环 → 全局验证 → 汇报结果
-```
+## 层级
 
-执行循环（对每个 Task 重复）：
-
-```
-读取进度清单，定位下一个未完成 Task
-→ 读取该 Task 完整 Step 描述
-→ 实现
-→ 单 Task 验证
-→ 提交
-→ 更新进度清单标记完成
+```text
+Stage → Task Group → Task → Step
 ```
 
-每次循环开头必须重新读取进度清单文件——这是上下文压缩后重新定位的唯一可靠锚点。
+- Stage 严格串行。
+- Task Group 严格串行。
+- Group 内 Task 当前按计划顺序串行。
+- Task 内 Step 严格串行。
 
-## 过程
+Stage 和 Task 都不是独立部署边界。
 
-### 步骤 1: 加载并复核计划
+## 流程
 
-1. 读取计划文件（默认位于 `docs/plans/YYYY-MM-DD-<slug>.md`，具体路径由上游 writing-plans 在交接时提供）
-2. 读取计划头部引用的术语表（`docs/CONTEXT.md`），在实现代码中使用术语表定义的规范命名
-3. 读取计划头部引用的设计文档（`docs/grill/YYYY-MM-DD-<slug>.md`），作为实现过程中理解设计意图和交叉验证的参考
-4. 批判性复核——识别关于计划的任何问题或疑虑
-   - 进度清单是否完整覆盖了所有 Task
-   - 同 Group 内的 Task 是否文件层面互斥
-   - Step 描述是否足够明确可执行
-5. 如果有疑虑：在开始之前向用户提出
-6. 如果没有疑虑：按 Group 顺序依次执行，每个 Group 内的 Task 完成后推进到下一个 Group
+```dot
+digraph execution {
+    "读取 brainstorming 索引" [shape=box];
+    "读取全部计划并复核" [shape=box];
+    "定位下一个未完成 Stage" [shape=box];
+    "重新读取当前计划进度" [shape=box];
+    "定位下一个未完成 Task" [shape=box];
+    "提取完整 Task 文本" [shape=box];
+    "交给 subagent-driven-development" [shape=box];
+    "Task 审查通过？" [shape=diamond];
+    "更新 Task 进度并交给 smart-exec-plan 提交" [shape=box];
+    "Stage 还有 Task？" [shape=diamond];
+    "交给 Stage 审查" [shape=box];
+    "还有 Stage？" [shape=diamond];
+    "交给最终验证和审查" [shape=doublecircle];
 
-### 步骤 2: 执行 Task
+    "读取 brainstorming 索引" -> "读取全部计划并复核";
+    "读取全部计划并复核" -> "定位下一个未完成 Stage";
+    "定位下一个未完成 Stage" -> "重新读取当前计划进度";
+    "重新读取当前计划进度" -> "定位下一个未完成 Task";
+    "定位下一个未完成 Task" -> "提取完整 Task 文本";
+    "提取完整 Task 文本" -> "交给 subagent-driven-development";
+    "交给 subagent-driven-development" -> "Task 审查通过？";
+    "Task 审查通过？" -> "交给 subagent-driven-development" [label="修复并重审"];
+    "Task 审查通过？" -> "更新 Task 进度并交给 smart-exec-plan 提交" [label="是"];
+    "更新 Task 进度并交给 smart-exec-plan 提交" -> "Stage 还有 Task？";
+    "Stage 还有 Task？" -> "重新读取当前计划进度" [label="是"];
+    "Stage 还有 Task？" -> "交给 Stage 审查" [label="否"];
+    "交给 Stage 审查" -> "还有 Stage？";
+    "还有 Stage？" -> "定位下一个未完成 Stage" [label="是"];
+    "还有 Stage？" -> "交给最终验证和审查" [label="否"];
+}
+```
 
-对于每个 Group 按串行顺序处理，Group 内各 Task 也按串行顺序逐个执行：
+## 开始前复核
 
-1. 阅读每个 Step 的需求描述
-2. 根据 Step 的规格要求自行编写实现代码和测试
-3. 自行构造并运行验证命令，确认测试通过
-4. 提交代码
-5. 在进度清单中将该 Task 标记为已完成（`- [ ]` 改为 `- [x]`）
-6. 继续执行 Group 内下一个 Task，Group 全部完成后进入下一个 Group
+开始实现前一次性复核全部计划：
 
-### 步骤 3: 计划完成
+1. brainstorming 索引是否列出全部 Stage 和计划文件。
+2. Stage 编号、依赖和文件是否一致。
+3. 每个计划是否有完整进度清单。
+4. Task 是否包含具体文件、测试、行为和提交信息。
+5. 前序 Stage 是否提供后续 Stage 依赖的最终接口。
+6. 最后一个 Stage 是否记录真实的完整验证命令。
+7. 是否存在仅用于保持中间服务运行的兼容 Task。
 
-全部 Task 完成并验证后：
-- 运行与所做改动相匹配的验证命令
-- 如果当前是某个 Stage 的计划，在 brainstorming 产出文件（`docs/brainstorming/YYYY-MM-DD-<slug>.md`）的 `## Stage 进度` 章节中将当前 Stage 的 `- [ ]` 改为 `- [x]`，不修改文件的其他部分
-- 向用户报告执行结果：完成了什么、测试结果、任何需要注意的问题
+关键缺口会导致错误实现时，在创建开发分支和修改代码前停止。不得自行补充设计决策。
 
-**终止状态：** 所有 Task 完成并验证后，向用户报告结果。如果当前是某个 Stage 的计划且存在未完成的后续 Stage，标记完成后向用户交接：「Stage N 已完成，进度清单已更新。下一步需回到 brainstorming 对 Stage N+1 进行续接。是否继续？」如果无后续 Stage，流程结束。
+## Task 定位规则
 
-## 何时停止并寻求帮助
+每次 Task 循环开始时重新读取当前计划文件，这是上下文压缩后恢复位置的唯一依据。
 
-**立即停止执行当：**
-- 遇到阻塞（缺失依赖、测试失败）
-- 计划有关键缺口导致无法开始
-- Step 描述过于模糊，关键细节缺失以至于无法确定应如何实现
-- 验证反复失败
+定位顺序：
 
-**寻求澄清而非猜测。**
+1. 找到第一个未完成 Group。
+2. 找到该 Group 第一个未完成 Task。
+3. 读取该 Task 的完整正文。
+4. 读取它引用的设计章节、术语和直接依赖。
+5. 将完整 Task 文本交给 subagent-driven-development。
 
-## 回退判断
+不得只依赖对话中的计划摘要。
 
-遇到阻塞时，根据问题根因判断应回退到哪个上游 skill：
+## Task 完成条件
 
-- Task 因接口定义不清或组件交互契约缺失而阻塞 → 回退到 grill-with-docs 补充设计
-- Task 因需求范围不明或方向有误而阻塞 → 回退到 brainstorming 重新评估
-- Task 因 Step 描述不足但设计本身没问题 → 回退到 writing-plans 补充计划细节
-- Task 因实现技术难题而阻塞 → 当前层级解决（向用户寻求帮助）
+Task 只有同时满足以下条件才可标记完成：
 
-## 何时重新审视前面的步骤
+1. 计划中的 Step 全部执行。
+2. 当前 Task 的红阶段失败已经验证。
+3. 当前 Task 的目标测试通过。
+4. 规格审查通过。
+5. 代码质量审查通过。
+6. 没有未解释的计划外修改。
 
-**返回复核（步骤 1）当：**
-- 用户根据你的反馈更新了计划
-- 基本方案需要重新思考
+满足条件后：
 
-**不要强行突破阻塞**——停下来并询问。
+1. 将进度清单中的 Task 标记为完成。
+2. 把计划文件、代码和测试一起交给 smart-exec-plan 提交。
+3. 提交成功后进入下一个 Task。
 
-## 记住
-- 首先批判性复核计划
-- Step 包含需求描述，执行时需要自行编写代码和命令
-- 使用 CONTEXT.md 中的规范术语命名代码中的标识符
-- 遇到实现细节不确定时参考设计文档
-- 进度通过文档头部的清单跟踪，而非 Task 正文中的 checkbox
-- 每完成一个 Task，必须立即更新进度清单，再继续执行下一个 Task
-- 不要跳过验证
-- 按计划要求参考相关技能
-- 遇到阻塞时停下来，不要猜测
+本技能不自行运行 `git commit`。
+
+## 验证边界
+
+Task 完成时只要求计划规定的局部验证通过。不得为了让中间 commit 可部署而增加兼容代码。
+
+以下状态可以留给后续 Task：
+
+- 调用方尚未全部迁移
+- 完整构建暂时失败
+- 服务暂时无法启动
+- 旧接口已经删除而后续模块尚未更新
+
+前提是当前 Task 已完成自身计划职责，且遗留部分明确属于后续已定义 Task。
+
+完整构建、类型检查、lint、单元测试和集成测试在全部 Stage 完成后统一执行。
+
+## Stage 边界
+
+当前 Stage 所有 Task 提交后，交给 subagent-driven-development 执行 Stage 审查。Stage 审查通过后由 smart-exec-plan：
+
+- 更新 brainstorming 中的执行状态
+- 将状态更新合入该 Stage 最后一个 Task commit
+- 使用 `--no-ff` 合并到原分支
+- 切回开发分支继续下一 Stage
+
+本技能不在 Stage 之间暂停，不调用 brainstorming，也不询问是否继续。
+
+## 阻塞处理
+
+立即停止并报告：
+
+- 计划缺少关键接口或验收标准
+- 实际代码与设计存在无法自行决定的冲突
+- 当前 Task 依赖未定义产物
+- 测试无法形成正确的红阶段失败
+- 审查问题反复修复仍不通过
+- 出现计划外数据损坏风险
+
+回退判断：
+
+- 最终需求范围不清：回到 brainstorming
+- 最终接口、数据或错误契约不清：回到 grill-with-docs
+- Task 描述不足：回到 writing-plans
+- 实现技术问题：在当前 Task 内提供上下文、拆分修复或使用更强模型
+
+阻塞时不得猜测，不得修改已完成 Task 的进度。

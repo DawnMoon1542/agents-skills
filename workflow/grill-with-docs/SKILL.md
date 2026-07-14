@@ -1,206 +1,212 @@
 ---
 name: grill-with-docs
-description: "brainstorming 确定需求后必须使用——对设计方案进行领域对质，精炼术语、验证边界场景、确认实现方案，将结论固化为 CONTEXT.md 和 ADR。"
+description: brainstorming 完成后使用——依次完成全部 Stage 的领域对质和最终状态设计，再统一交给 writing-plans
 ---
 
-# 领域对质与方案精炼
+# 领域对质与最终状态设计
 
-接收 brainstorming 产出的需求和方向选型，逐一拷问每个设计决策，直到所有术语精确、方案细节经受住领域模型的检验。将结论即时固化为文档。
+读取 brainstorming 确认的完整需求和全部 Stage，按顺序完成每个 Stage 的设计。设计目标是全部 Stage 执行后的最终系统，不为开发期间保持服务运行而增加过渡兼容机制。
 
-**开始时声明：** "我正在使用 grill-with-docs 技能对设计方案进行领域对质。"
+**开始时声明：** “我正在使用 grill-with-docs 技能依次完成全部 Stage 的设计。”
 
 <HARD-GATE>
-在所有设计分支拷问完毕、术语和方案细节达成共识之前，不得调用 writing-plans 或任何实现技能。
+在全部 Stage 的设计分支完成对质、术语和方案细节达成共识前，不得调用 writing-plans 或任何实现技能。
 </HARD-GATE>
 
 ## 输入
 
-读取 brainstorming 产出的文件 `docs/brainstorming/YYYY-MM-DD-<slug>.md`（具体路径由上游 brainstorming 在交接时提供），其中包含：
+读取 brainstorming 产出的索引文件：
 
-- 需求边界和成功标准
-- 方向选型（选定的大方向及理由）
-- 如有多 Stage 分割，根据 Stage 进度清单定位当前未完成的 Stage，读取对应的 Stage 章节作为输入
+```text
+docs/brainstorming/YYYY-MM-DD-<slug>.md
+```
+
+必须获得：
+
+- 完整需求边界
+- 最终成功标准
+- 方向选型
+- 明确排除的内容
+- 全部 Stage 的范围、依赖和顺序
+
+不得只读取第一个 Stage 后提前交给 writing-plans。
 
 ## 输出
 
-1. **设计文档** — 经过领域对质后的完整设计，保存到 `docs/grill/YYYY-MM-DD-<slug>.md`（无 Stage）或 `docs/grill/YYYY-MM-DD-<slug>-stage-N.md`（有 Stage）。沿用 brainstorming 确定的 slug。包含：架构、组件、数据流、接口定义、错误处理、测试策略。术语与 `docs/CONTEXT.md` 一致，方案细节经过边界场景验证。
-2. **docs/CONTEXT.md** — 术语表（新建或更新）
-3. **docs/adr/NNNN-slug.md** — 在对质过程中即时创建，仅在满足三项条件时
+每个 Stage 生成独立设计文件：
 
-输出的设计文档是 writing-plans 的直接输入。
+```text
+docs/grill/YYYY-MM-DD-<slug>-stage-1.md
+docs/grill/YYYY-MM-DD-<slug>-stage-2.md
+docs/grill/YYYY-MM-DD-<slug>-stage-N.md
+```
+
+同时按需更新：
+
+- `docs/CONTEXT.md` 或对应 context 文件
+- `docs/CONTEXT-MAP.md`
+- `docs/adr/NNNN-<decision-slug>.md`
+- brainstorming 索引中的设计状态和设计文件
+
+无显式 Stage 时使用统一的 Stage 1 文件名。
 
 ## 流程
 
 ```dot
 digraph grill {
-    "读取 brainstorming 产出文件" [shape=box];
-    "探索代码库与既有文档" [shape=box];
-    "评估对质深度" [shape=diamond];
-    "快速通道：直接产出设计文档\n（建立术语表）" [shape=box];
-    "逐一拷问设计决策" [shape=box];
-    "术语校准 → 更新 CONTEXT.md" [shape=box];
-    "场景压测" [shape=box];
-    "代码交叉验证" [shape=box];
-    "方案决策达成 → 创建 ADR（如需要）" [shape=box];
-    "所有分支达成共识？" [shape=diamond];
-    "产出设计文档" [shape=box];
-    "自审（spec-document-reviewer）" [shape=box];
-    "用户确认？" [shape=diamond];
+    "读取完整 brainstorming 索引" [shape=box];
+    "探索代码、术语表和 ADR" [shape=box];
+    "定位下一个 Stage" [shape=box];
+    "对质最终状态设计" [shape=box];
+    "更新术语与 ADR" [shape=box];
+    "生成 Stage 设计文件" [shape=box];
+    "设计自审" [shape=box];
+    "用户确认 Stage 设计？" [shape=diamond];
+    "更新 Stage 设计状态" [shape=box];
+    "还有 Stage？" [shape=diamond];
     "调用 writing-plans" [shape=doublecircle];
 
-    "读取 brainstorming 产出文件" -> "探索代码库与既有文档";
-    "探索代码库与既有文档" -> "评估对质深度";
-    "评估对质深度" -> "快速通道：直接产出设计文档\n（建立术语表）" [label="方案已充分\n且无既有术语表"];
-    "评估对质深度" -> "逐一拷问设计决策" [label="标准流程"];
-    "快速通道：直接产出设计文档\n（建立术语表）" -> "自审（spec-document-reviewer）";
-    "逐一拷问设计决策" -> "术语校准 → 更新 CONTEXT.md";
-    "逐一拷问设计决策" -> "场景压测";
-    "逐一拷问设计决策" -> "代码交叉验证";
-    "术语校准 → 更新 CONTEXT.md" -> "所有分支达成共识？";
-    "场景压测" -> "所有分支达成共识？";
-    "代码交叉验证" -> "所有分支达成共识？";
-    "方案决策达成 → 创建 ADR（如需要）" -> "所有分支达成共识？";
-    "所有分支达成共识？" -> "逐一拷问设计决策" [label="否，继续"];
-    "所有分支达成共识？" -> "产出设计文档" [label="是"];
-    "产出设计文档" -> "自审（spec-document-reviewer）";
-    "自审（spec-document-reviewer）" -> "用户确认？";
-    "用户确认？" -> "逐一拷问设计决策" [label="需要修改"];
-    "用户确认？" -> "调用 writing-plans" [label="已确认"];
+    "读取完整 brainstorming 索引" -> "探索代码、术语表和 ADR";
+    "探索代码、术语表和 ADR" -> "定位下一个 Stage";
+    "定位下一个 Stage" -> "对质最终状态设计";
+    "对质最终状态设计" -> "更新术语与 ADR";
+    "更新术语与 ADR" -> "生成 Stage 设计文件";
+    "生成 Stage 设计文件" -> "设计自审";
+    "设计自审" -> "用户确认 Stage 设计？";
+    "用户确认 Stage 设计？" -> "对质最终状态设计" [label="需要修改"];
+    "用户确认 Stage 设计？" -> "更新 Stage 设计状态" [label="已确认"];
+    "更新 Stage 设计状态" -> "还有 Stage？";
+    "还有 Stage？" -> "定位下一个 Stage" [label="是"];
+    "还有 Stage？" -> "调用 writing-plans" [label="否"];
 }
 ```
 
-## 过程
+## 探索既有实现
 
-### 探索既有文档
+开始设计前检查：
 
-进入项目后首先查找：
+- `docs/CONTEXT.md` 或 `docs/CONTEXT-MAP.md`
+- `docs/adr/`
+- 领域模型、接口、数据结构和错误类型
+- 各 Stage 会修改的直接调用方
+- 现有测试和构建约束
 
-- `docs/CONTEXT.md` 或 `docs/CONTEXT-MAP.md` — 已有术语表
-- `docs/adr/` — 已有架构决策记录
-- 代码中的领域模型（实体、值对象、枚举、接口定义）
+代码是现状事实来源。设计文档描述目标状态，两者冲突时明确记录需要替换的现有行为。
 
-如果存在 `docs/CONTEXT-MAP.md`，按其指引定位当前话题所属的 context。
+## 最终状态优先
 
-### 评估对质深度
+设计每个 Stage 时，只描述它在完整需求完成后承担的职责。除非最终需求明确要求长期兼容，否则不得为了开发期间保持服务运行而加入：
 
-探索完毕后，判断是否可以进入快速通道：
+- 新旧接口并存
+- compatibility adapter
+- deprecated alias
+- 双读或双写
+- 新旧 Schema 并存
+- 临时数据格式转换层
+- feature flag 分批切换
+- 为旧调用方保留的临时入口
+- 为中间 Stage 准备的独立部署方案
 
-- 若以下条件全部满足 → **快速通道**：跳过逐一拷问，直接产出设计文档，在过程中建立术语表
-  1. 项目无既有 `docs/CONTEXT.md`
-  2. 项目无既有 `docs/adr/`
-  3. brainstorming 产出中未引入需要校准的领域特定术语（即所有概念都是通用编程概念，无歧义风险）
-- 否则 → **标准流程**：逐一拷问
+Stage 无须独立部署，也无须保证完成该 Stage 后服务可启动。
 
-快速通道不是跳过 grill-with-docs，而是压缩对质深度。术语表和设计文档仍然产出。
+以下内容仍须设计：
 
-### 逐一拷问设计决策
+- 最终架构和组件边界
+- 最终接口和数据模型
+- 最终错误处理
+- 全部 Stage 完成后的外部契约
+- 数据完整性和不可逆操作保护
+- 用户明确要求长期保留的兼容行为
+- 最终测试策略
 
-沿设计树的每个分支逐一追问，每次只问一个问题，等待反馈后再继续。对每个问题提供你的推荐答案。
+数据安全不等同于开发期间兼容。允许一次性替换旧结构，但不得丢失或错误转换已有数据。
 
-如果某个问题可以通过探索代码库回答，直接去读代码而非追问用户。
+## 逐一对质
 
-拷问的维度：
+对每个 Stage 沿设计树逐项确认：
 
-- **术语精确性** — 用户使用的每个领域术语是否与 CONTEXT.md 一致
-- **方案可行性** — 提出的方案在当前代码库结构下是否可行
-- **接口边界** — 组件之间的交互契约是否明确
-- **错误与边界** — 异常路径和边界情况的处理策略
+- **术语精确性**：领域术语是否与 CONTEXT 一致
+- **最终职责**：该 Stage 最终负责什么，不负责什么
+- **接口边界**：组件完成全部 Stage 后如何交互
+- **数据流**：最终数据从哪里产生、流向哪里
+- **错误处理**：最终异常如何传播和呈现
+- **数据安全**：迁移、删除和不可逆操作是否保护数据
+- **测试策略**：当前 Stage 的行为测试及最终集成测试
+- **跨 Stage 依赖**：后续 Stage 依赖哪些明确产物
 
-### 术语校准
+每次只提出一个需要用户决定的问题。能从代码确认的事实不询问用户。
 
-当用户使用的术语与 `docs/CONTEXT.md` 中的定义冲突时，立即指出：
+## 术语和 ADR
 
-> "术语表将 'cancellation' 定义为 X，但你似乎在说 Y — 以哪个为准？"
+术语确认后立即更新 CONTEXT。格式参见 [CONTEXT-FORMAT.md](./CONTEXT-FORMAT.md)。
 
-当用户使用模糊或多义术语时，提出精确的规范命名：
+方案决策同时满足以下条件时创建 ADR：
 
-> "你说的 'account' 是指 Customer 还是 User？在这个上下文中它们是不同的概念。"
-
-### 场景压测
-
-用具体场景检验领域关系。构造探测边界情况的场景，迫使用户对概念边界给出精确定义。
-
-### 代码交叉验证
-
-当用户陈述某个机制的工作方式时，检查代码是否一致。发现矛盾时主动暴露：
-
-> "代码中取消操作针对整个 Order，但你刚才说可以部分取消 — 以哪个为准？"
-
-### 更新 docs/CONTEXT.md
-
-术语一旦确认就立刻写入 `docs/CONTEXT.md`。不要等到最后才批量更新。
-
-格式参见 [CONTEXT-FORMAT.md](./CONTEXT-FORMAT.md)。
-
-`docs/CONTEXT.md` 只包含领域术语和关系。不包含实现细节、技术方案、配置项。它是术语表，不是规格文档。
-
-### 创建 ADR
-
-在对质过程中，当某个方案决策达成共识时，立即评估是否需要创建 ADR。不要等到最后批量创建。
-
-仅当以下三项同时满足时才创建 ADR：
-
-1. **难以逆转** — 事后改变主意的代价显著
-2. **缺少上下文会令人困惑** — 未来读者会疑惑"为什么这样做"
-3. **存在真实权衡** — 确有替代方案，且因具体理由选择了当前方案
+1. 难以逆转。
+2. 缺少背景会令人困惑。
+3. 存在真实权衡。
 
 格式参见 [ADR-FORMAT.md](./ADR-FORMAT.md)。
 
-## 设计文档结构
+不得为纯开发过渡机制创建 ADR，因为这类机制默认不应存在。
 
-拷问完毕后，产出完整设计文档。结构根据复杂度调整，至少包含：
+## Stage 设计文件结构
+
+每个设计文件至少包含：
 
 ```markdown
-# [功能名称] 设计
+# <功能名称> Stage N 设计
 
-## 概述
-[一段话描述要构建什么、为什么]
+**需求索引：** `docs/brainstorming/YYYY-MM-DD-<slug>.md`
+**Stage：** N / 总 Stage 数
+**依赖：** 无或前置 Stage
 
-## 架构
-[系统结构、组件划分、数据流向]
+## Stage 职责
+
+## 最终架构位置
 
 ## 接口定义
-[组件间的交互契约、公共 API、数据结构]
+
+## 数据流与数据安全
 
 ## 错误处理
-[异常路径、降级策略、边界情况]
+
+## 与其他 Stage 的契约
 
 ## 测试策略
-[测试层级、关键测试场景]
+
+## 明确排除
 ```
 
-简单功能的设计可以压缩到几段话，但上述维度都需要覆盖。
+“明确排除”应记录未采用的开发期兼容机制，防止 writing-plans 再次引入。
 
 ## 自审
 
-产出设计文档后、向用户展示前，使用 [spec-document-reviewer-prompt.md](./spec-document-reviewer-prompt.md) 中的检查项对设计文档进行自审：
+使用 [spec-document-reviewer-prompt.md](./spec-document-reviewer-prompt.md) 审查：
 
-- 完整性：无 TODO、占位符、不完整的部分
-- 一致性：无内部矛盾、冲突的需求
-- 清晰性：需求歧义不会导致构建错误的东西
-- 范围：聚焦到足以生成单个实现计划
+- 当前 Stage 是否符合完整需求
+- 最终状态是否清晰
+- 与已确认 Stage 是否一致
+- 跨 Stage 契约是否明确
+- 是否包含纯过渡兼容设计
+- 数据安全是否完整
+- 测试策略是否覆盖最终行为
 
-发现问题时直接修正，修正后再展示给用户确认。
+审查通过并获得用户确认后：
+
+1. 更新 brainstorming 索引中的设计状态为已完成。
+2. 写入对应设计文件。
+3. 继续下一个 Stage。
 
 ## 终止条件
 
-满足以下全部条件时，宣布对质完成：
+仅在以下条件全部满足后调用 writing-plans：
 
-1. 所有设计分支已拷问，无未决问题
-2. 术语表已更新（如有变化）
-3. ADR 已创建（如有需要）
-4. 设计文档通过自审
-5. 用户确认设计文档
+1. 全部 Stage 已完成设计。
+2. 全部 Stage 设计已通过自审。
+3. 全部 Stage 设计已获得用户确认。
+4. CONTEXT 已更新。
+5. 符合条件的 ADR 已创建。
+6. brainstorming 索引记录了全部设计文件。
 
-确认后调用 writing-plans 技能，将设计文档路径作为其输入。
-
-**终止状态是调用 writing-plans。** grill-with-docs 之后唯一调用的技能是 writing-plans。
-
-## 核心原则
-
-- **逐个提问** — 每次一个问题，等待反馈再继续
-- **提供推荐** — 对每个问题给出你的推荐答案和理由
-- **代码优先** — 能通过读代码回答的问题不要问用户
-- **即时固化** — 术语确认后立即写入 CONTEXT.md，决策达成后立即评估是否需要 ADR，不批量处理
-- **克制 ADR** — 不满足三项条件的决策不创建 ADR
-- **精确优于完整** — 宁可少覆盖几个维度，也不能让任何一个维度含糊
+交接内容包括 brainstorming 索引和按顺序排列的全部 Stage 设计文件。
