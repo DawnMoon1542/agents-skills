@@ -1,6 +1,6 @@
 # PI Coding Agent Skills 技能总览
 
-> 本文档介绍 `/Users/dawnmoon/.agents/skills` 目录下全部 26 个技能，按功能领域分类整理。
+> 本文档介绍 `/Users/dawnmoon/.agents/skills` 目录下全部 25 个技能，按功能领域分类整理。
 
 ---
 
@@ -162,12 +162,6 @@ URL 转 Markdown 的统一入口。决策流程：先判断域名是否命中反
 
 ## 五、效率与质量技能（5 个）
 
-### continuously-work — 持续执行与渐进提交
-
-将任务拆解为可验证的步骤序列，每完成一个步骤或里程碑立即 git commit，不停不等直到全部完成。遵循「完成即提交」铁律，每个 commit 是可独立回退的原子变更。
-
-错误分级处理：P0 阻断（暂停等待用户）→ P1 可绕过（记录后继续）→ P2 可忽略。提交前自动执行项目对应的编译/测试/lint 检查。工作完成后生成提交记录总结。
-
 ### full-output-enforcement — 完整输出强制执行
 
 覆盖默认 LLM 截断行为，强制完整代码生成。禁止模式包括：代码中的 `// ...` 占位符、散文中的「其余类似」、结构性捷径（骨架代完整实现）。
@@ -215,7 +209,7 @@ brainstorming ──→ grill-with-docs ──→ writing-plans
 - **设计层**：design-taste-frontend、morandi-color-scheme
 - **搜索层**：search-layer、content-extract、mineru-extract
 - **工具层**：agent-browser、yt-dlp-downloader、md2html、linting-neostandard
-- **质量层**：continuous-work、full-output-enforcement、systematic-debugging、dispatching-parallel-agents
+- **质量层**：full-output-enforcement、systematic-debugging、dispatching-parallel-agents
 - **管理**：pi-session-summarizer、ui-component-library-showcase
 
 ---
@@ -228,5 +222,5 @@ brainstorming ──→ grill-with-docs ──→ writing-plans
 | 语言与框架 | 5 | typescript-magician, react-best-practices, node-best-practices, design-taste-frontend, frontend-ui-design-morandi-color-scheme |
 | 工具与实用 | 4 | agent-browser, yt-dlp-downloader, md2html, linting-neostandard-eslint9 |
 | 搜索 | 3 | search-layer, content-extract, mineru-extract |
-| 效率与质量 | 5 | continuously-work, full-output-enforcement, pi-session-summarizer, git-smart-commit, ui-component-library-showcase |
-| **总计** | **26** | |
+| 效率与质量 | 4 | full-output-enforcement, pi-session-summarizer, git-smart-commit, ui-component-library-showcase |
+| **总计** | **25** | |

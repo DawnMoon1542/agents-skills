@@ -948,10 +948,7 @@
       <h3 id="mineru-extract">mineru-extract — MinerU 官方 API 解析</h3>
       <p>调用 MinerU（mineru.net）官方 API 将 URL 转为干净 Markdown + 结构化输出。支持 HTML 页面、PDF、Office 文档、图片等格式。通过 MCP 风格脚本实现提交 → 轮询 → 下载结果 zip → 提取主 Markdown 的流程。支持 OCR、表格识别、公式识别。</p>
 
-      <h2 id="quality">五、效率与质量技能（5 个）</h2>
-
-      <h3 id="continuously-work">continuously-work — 持续执行与渐进提交</h3>
-      <p>将任务拆解为可验证的步骤序列，每完成一个步骤或里程碑立即 git commit，不停不等直到全部完成。每个 commit 是可独立回退的原子变更。错误分级处理：P0 阻断（暂停等待用户）→ P1 可绕过（记录后继续）→ P2 可忽略。提交前自动执行项目对应的编译/测试/lint 检查。</p>
+      <h2 id="quality">五、效率与质量技能（4 个）</h2>
 
       <h3 id="full-output-enforcement">full-output-enforcement — 完整输出强制执行</h3>
       <p>覆盖默认 LLM 截断行为，强制完整代码生成。禁止代码中的 <code>// ...</code> 占位符和结构性捷径。令牌接近上限时在干净断点暂停，标注完成进度和恢复点。响应前强制执行禁止模式检查和交付物计数核对。</p>
@@ -985,7 +982,7 @@ flowchart TD
     L2[设计层: design-taste-frontend<br/>morandi-color-scheme]
     L3[搜索层: search-layer<br/>content-extract<br/>mineru-extract]
     L4[工具层: agent-browser<br/>yt-dlp-downloader<br/>md2html<br/>linting-neostandard]
-    L5[质量层: continuously-work<br/>full-output-enforcement<br/>systematic-debugging<br/>dispatching-parallel-agents]
+    L5[质量层: full-output-enforcement<br/>systematic-debugging<br/>dispatching-parallel-agents]
     L6[管理层: pi-session-summarizer<br/>ui-component-library-showcase]
   end
 
@@ -1011,8 +1008,8 @@ flowchart TD
             <tr><td>语言与框架</td><td>5</td><td>typescript-magician, react-best-practices, node-best-practices, design-taste-frontend, frontend-ui-design-morandi-color-scheme</td></tr>
             <tr><td>工具与实用</td><td>4</td><td>agent-browser, yt-dlp-downloader, md2html, linting-neostandard-eslint9</td></tr>
             <tr><td>搜索</td><td>3</td><td>search-layer, content-extract, mineru-extract</td></tr>
-            <tr><td>效率与质量</td><td>5</td><td>continuously-work, full-output-enforcement, pi-session-summarizer, git-smart-commit, ui-component-library-showcase</td></tr>
-            <tr><td><strong>总计</strong></td><td><strong>26</strong></td><td></td></tr>
+            <tr><td>效率与质量</td><td>4</td><td>full-output-enforcement, pi-session-summarizer, git-smart-commit, ui-component-library-showcase</td></tr>
+            <tr><td><strong>总计</strong></td><td><strong>25</strong></td><td></td></tr>
           </tbody>
         </table>
       </div>

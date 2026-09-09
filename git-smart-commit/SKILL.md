@@ -223,7 +223,6 @@ catch 块中增加错误信息返回逻辑
 
 ## 8. 与其他技能的协作
 
-- 与 `continuously-work` 配合：持续执行期间频繁自动提交，任务完成后使用本技能做最终审查提交。
 - 与 `code-review` 配合：code-review 完成后，使用本技能将审查修正作为一个整体提交。
 - 与 `subagent-driven-development` 配合：子代理返回变更后，使用本技能统一提交。
 

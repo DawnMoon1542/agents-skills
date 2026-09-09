@@ -281,7 +281,6 @@ chore: 配置 eslint 并启用 tsconfig strict 模式
 ## 8. 与其他技能的协作
 
 - 与 `git-smart-commit` 配合：多次 smart-commit 后使用本技能合并为一个整洁的 commit。
-- 与 `continuously-work` 配合：持续执行期间产生的多个增量 commit，任务完成后使用本技能压缩为一个语义完整的 commit。
 - 与 `subagent-driven-development` 配合：多个子代理各自提交后，使用本技能统一压缩。
 
 ## 9. 禁止模式
