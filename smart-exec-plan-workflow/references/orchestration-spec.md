@@ -1,0 +1,206 @@
+# Workflow 编排规范
+
+本文件是 `smart-exec-plan-workflow` 生成脚本时的固定契约。生成新脚本时只允许替换占位符与 `CFG` 配置块，下列结构、phase 名称、顺序、schema 与停止条件保持不变。
+
+## 1. 文件约定
+
+- 位置：项目内 `.claude/workflows/<slug>-stages.js`
+- 语言：纯 JavaScript，不带 TypeScript 注解
+- 顶层必须先声明 `export const meta`
+- 配置集中在单个 `CFG` 常量，流程代码不出现散落的硬编码路径与分支名
+
+## 2. meta 结构
+
+```js
+export const meta = {
+  name: '<slug>-stages',
+  description: '<一句话说明执行哪个需求的哪个 Stage 区间>',
+  whenToUse: '<计划文件路径或触发场景>',
+  phases: [
+    { title: 'Scout', detail: '...' },
+    { title: 'TestDesign', detail: '...' },
+    { title: 'Implement', detail: '...' },
+    { title: 'SpecReview', detail: '...' },
+    { title: 'QualityReview', detail: '...' },
+    { title: 'Commit', detail: '...' },
+    { title: 'StageReview', detail: '...' },
+    { title: 'Verify', detail: '...' },
+    { title: 'Merge', detail: '...' },
+  ],
+}
+```
+
+硬性要求：
+
+- `meta` 是纯字面量：不能出现变量、函数调用、对象展开、模板字符串插值
+- `phases` 九项固定，标题与 `phase` 字段完全一致，不增不减
+- `Phase` 名称按此顺序出现，最终审查复用 `StageReview` phase，不新增 `FinalReview`
+
+## 3. Phase 契约
+
+| 顺序 | Phase | 输入 | 输出 schema | 允许 Git 写操作 |
+|---|---|---|---|---|
+| 1 | Scout | 分支、HEAD、工作区状态；计划进度清单 | `PREFLIGHT_SCHEMA`、`TASK_LIST_SCHEMA` | 否 |
+| 2 | TestDesign | Task 全文、设计、术语表、允许文件 | `TEST_SCHEMA` | 否 |
+| 3 | Implement | Task 全文、测试报告（红阶段与测试文件） | `IMPL_SCHEMA` | 否 |
+| 4 | SpecReview | Task 全文、BASE_SHA、实现者报告 | `SPEC_SCHEMA` | 否 |
+| 5 | QualityReview | Task、BASE_SHA、红/绿阶段结果 | `QUALITY_SCHEMA` | 否 |
+| 6 | Commit | Task 提交信息、审查结论；需求索引执行状态 | `COMMIT_SCHEMA` | 是：`git add`、`git commit`、`git commit --amend` |
+| 7 | StageReview | STAGE_BASE_SHA..HEAD、设计、计划、Stage 验证结果 | `STAGE_REVIEW_SCHEMA`、`FINAL_SCHEMA` | 否 |
+| 8 | Verify | 计划中的真实验证命令 | `VERIFY_SCHEMA` | 否 |
+| 9 | Merge | 基线分支期望 HEAD、开发分支 | `MERGE_SCHEMA` | 是：`git switch`、`git merge` |
+
+`mergeEnabled=false` 时跳过 Merge phase，`devBranch` 与 `baseBranch` 同名时必须设为 `false`，否则脚本在基线检查前停止。Stage 状态 amend 在 Commit phase 执行，与是否合并无关。
+
+TestDesign 与 Implement 由两个独立代理完成：
+
+- 测试编写者只写会失败的目标测试，运行后在 `redPhase` 记录失败原因，确认是功能缺失而不是语法或导入错误；不得修改生产代码
+- 没有测试 Step 的 Task（纯文档、静态资源、无行为配置）返回 `NOT_APPLICABLE` 并在 `redPhase` 写明理由，实现者照常执行
+- 实现者拿到测试文件清单与红阶段输出，只改生产代码使其转绿，在 `greenPhase` 记录真实输出；不得删改、跳过或放宽测试
+- 两者都返回 BLOCKED / NEEDS_CONTEXT 时各自最多补充 `implRetries` 次上下文，每次交给新代理
+- Task 审查范围从测试编写者返回的 `baseSha` 起算，测试与实现差异一并审查
+
+## 4. 串行约束
+
+Stage 严格串行，Task 严格串行。原因不是流程偏好，而是所有 agent 共享同一个工作区：
+
+- 两个实现者同时修改同一仓库会互相覆盖彼此的编辑
+- Task 的审查范围是 `TASK_BASE_SHA..工作区`，并行会让差异混入其他 Task
+- 提交必须一次只包含当前 Task 的文件
+- Stage 审查的范围是 `STAGE_BASE_SHA..HEAD`，并行提交会破坏边界
+
+因此脚本中：
+
+- 禁止对实现、审查、提交相关步骤使用 `parallel()` 或 `pipeline()`
+- 需要并发时只允许用于只读的文档审查（生成脚本阶段之外）
+- 不使用 `isolation: 'worktree'`：本流程依赖单一工作区与线性历史
+
+## 5. 审查循环
+
+Task 内两个独立循环，顺序固定：
+
+```text
+SpecReview 通过 → QualityReview 通过 → Commit
+```
+
+循环规则：
+
+- 规格审查未通过：把 `missing`、`extra`、`designDeviations`、`dataRisks` 合并为问题清单，交回实现者修复，再复审
+- 质量审查未通过：把 `critical`、`important`、`minor` 合并，交回修复，再复审
+- 修复失败（BLOCKED / NEEDS_CONTEXT）或超过 `reviewRounds`：停止，不上报通过
+- 修复者的 `baseSha` 保持原 `BASE_SHA` 不变，保证审查范围不漂移
+- 质量审查必须看到规格审查通过后的实现，不能在规格未通过时开始
+
+Stage 审查循环：
+
+- 审查者同时拿到 Stage 验证结果，判断失败属于本 Stage 缺陷还是计划中后续 Stage 承接的中间状态；前者判 `NEEDS_CHANGES`，后者可以放行并在 `integration` 中写明承接 Stage
+- 循环只由审查 `verdict` 驱动，Stage 验证失败本身不停止流程
+- `NEEDS_CHANGES` 时由审查者给出 `issues` 与 `fixTasks` 草案
+- 修复 Task 追加进计划文件，单独提交后重新扫描未完成 Task
+- 修复后重新执行 Stage 验证与 Stage 审查，复审时附上上一轮问题清单
+- 超过 `stageRepairs` 停止
+
+最终验证与最终审查循环：
+
+- 只在配置中最后一个 Stage 执行，且 Stage 审查通过之后、状态 amend 与合并之前；通过 `args.stages` 只跑前几个 Stage 时不执行
+- 最终验证是硬门槛：失败时把失败明细作为修复 Task 追加到最后一个 Stage 计划，走完整 Task 循环
+- 每轮收尾修复提交后执行收尾复审（`stageReviewPrompt` 的 `finalState=true`）：此时已是最终状态，不再有“归属后续 Stage”的豁免；复审 `NEEDS_CHANGES` 时按其 `fixTasks` 继续修复
+- 复审通过后回到最终验证；最终审查只在最终验证通过后执行，`NEEDS_CHANGES` 时按 `FINAL_SCHEMA.fixTasks` 追加修复并重新走复审与验证
+- 三类修复共享 `finalRepairs` 轮次上限（默认 3），上限用尽仍未通过即停止，原因写明是哪类修复超限
+
+## 6. 提交规则
+
+Task commit：
+
+1. 勾选计划进度清单中该 Task 的 `- [ ]` 为 `- [x]`，只改这一行
+2. `git status --short` 确认只包含本 Task 的代码、测试与计划进度
+3. 按文件列表逐个 `git add`，禁止 `git add -A` 与 `git add .`
+4. 使用计划中的提交信息，正文末尾追加 `Co-Authored-By` trailer
+5. 提交后确认工作区干净并返回 SHA
+
+Stage 状态更新：
+
+1. 修改需求索引中的执行状态行
+2. 确认只有该文件变化
+3. `git commit --amend --no-edit` 合入本 Stage 最后一个 Task commit
+4. 该更新不形成独立 commit
+
+合并：
+
+- 切到 `x`，确认 HEAD 等于记录的期望值
+- `git merge --no-ff <y>`
+- 合并信息使用 `merge: 完成 <功能> Stage N` 加中文正文
+- 冲突时 `git merge --abort`，切回 `y`，报告冲突文件与两个 SHA，停止
+- 合并后切回 `y` 继续下一 Stage，`y` 不需要合并刚产生的 merge commit
+
+## 7. 停止条件与上报
+
+必须停止并上报的情况：
+
+| 条件 | 上报内容 |
+|---|---|
+| 当前分支不是 `y` | 实际分支、期望分支 |
+| 工作区不干净 | 具体文件列表 |
+| 实现阻塞 | Stage、Task、原因、已完成范围 |
+| 审查超限 | 最后一轮问题清单 |
+| 测试或实现缺证据 | 缺失的红阶段、测试文件或绿阶段 |
+| 收尾修复超限 | 超限的修复来源、最后一轮问题；验证失败时附命令、输出片段、失败项 |
+| Stage 审查未通过 | 未解决的设计覆盖或集成问题 |
+| 最终审查未通过 | `FINAL_SCHEMA` 全部字段 |
+| 合并冲突 | 冲突文件、`x` 与 `y` 的 SHA |
+| 基线 HEAD 变化 | 期望 SHA 与实际 SHA |
+
+返回对象固定包含：
+
+```js
+{
+  implementationBaseSha,
+  stages: [{ stage, title, stageBaseSha, tasks: [{ id, sha, concerns }], commitShas, stageReview, verify, statusSha, merge }],
+  blocked: { stage, task?, reason, dirtyFiles? } | null,
+  finalVerify,
+  finalReview,
+}
+```
+
+## 8. Schema 清单
+
+以下 schema 为固定签名，字段名不得改动，下游步骤按字段名汇总问题：
+
+| Schema | 关键字段 |
+|---|---|
+| `PREFLIGHT_SCHEMA` | `branch`、`headSha`、`clean`、`dirtyFiles`、`branchMatches` |
+| `TASK_LIST_SCHEMA` | `stage`、`stageTitle`、`headSha`、`clean`、`dirtyFiles`、`tasks[]` |
+| `TEST_SCHEMA` | `status`（`TESTS_WRITTEN` / `NOT_APPLICABLE` / `BLOCKED` / `NEEDS_CONTEXT`）、`baseSha`、`summary`、`redPhase`、`testFiles` |
+| `IMPL_SCHEMA` | `status`、`baseSha`、`summary`、`redPhase`、`greenPhase`、`changedFiles` |
+| `SPEC_SCHEMA` | `status`、`missing`、`extra`、`designDeviations`、`dataRisks` |
+| `QUALITY_SCHEMA` | `verdict`、`critical`、`important`、`minor` |
+| `COMMIT_SCHEMA` | `committed`、`sha`、`commitMessage`、`stagedFiles`、`cleanAfter`、`error` |
+| `STAGE_REVIEW_SCHEMA` | `verdict`、`coverage`、`integration`、`issues`、`fixTasks` |
+| `VERIFY_SCHEMA` | `passed`、`command`、`summary`、`failures` |
+| `FINAL_SCHEMA` | `verdict`、`requirementStatus`、`integrationStatus`、`architectureStatus`、`verificationStatus`、`issues`、`fixTasks` |
+| `MERGE_SCHEMA` | `merged`、`conflict`、`conflictFiles`、`baseHeadBefore`、`baseHeadAfter`、`mergeSha`、`devHead`、`cleanAfter` |
+
+每个 `agent()` 调用必须传入对应 schema；没有 schema 的调用只允许用于返回短文本的只读步骤（读取 SHA、追加修复 Task 的标题列表）。
+
+## 9. 恢复与重跑
+
+- 中断后优先用 `resumeFromRunId` 复用未变化的调用，避免重复实现已提交的 Task
+- 恢复前先确认工作区状态与 HEAD，已提交的 Task 不会因为重跑而重复提交
+- 计划进度清单是唯一可信的完成标记，历史报告不构成完成证据
+- 改动脚本后不得沿用旧 runId 声称原结果
+
+## 10. 生成前自查
+
+生成脚本后逐项确认：
+
+1. `meta` 是纯字面量，phases 九项且顺序正确
+2. `CFG` 中的路径、分支、验证命令都来自实际文件，没有占位符残留
+3. 所有 `agent()` 的 `phase` 值都在 `meta.phases` 中存在
+4. 没有 `parallel` / `pipeline` / `isolation`
+5. 每个审查循环都有轮次上限与超限返回值
+6. 每条停止路径都写入 `blocked` 并 `break`
+7. Git 写操作只出现在 `Commit` 与 `Merge` phase 的提示中
+8. 测试编写者、实现者与审查者的提示包含禁止 Git 写操作的约束；测试编写者禁止改生产代码，实现者禁止删改测试
+9. 最终验证与最终审查只在配置的最后一个 Stage 执行，位于状态 amend 与合并之前，验证通过后才审查；收尾修复后先复审再重新验证，三类修复共享 `finalRepairs`
+10. Stage 验证失败不直接停止，只作为 Stage 审查的输入
+11. 脚本没有使用 `Date.now()`、`Math.random()` 或其它不可恢复的调用

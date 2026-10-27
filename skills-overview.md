@@ -1,6 +1,6 @@
 # PI Coding Agent Skills 技能总览
 
-> 本文档介绍 `/Users/dawnmoon/.agents/skills` 目录下全部 25 个技能，按功能领域分类整理。
+> 本文档介绍 `/Users/dawnmoon/.agents/skills` 目录下的 29 个技能，按功能领域分类整理。
 
 ---
 
@@ -14,7 +14,7 @@
 
 ---
 
-## 一、工作流技能（9 个）
+## 一、工作流技能（13 个）
 
 贯穿需求到交付的完整软件工程周期，每个环节有对应的技能覆盖。
 
@@ -54,11 +54,35 @@
 
 支持机械性实现用廉价模型、集成判断用标准模型、架构设计用最强模型的分级策略。审查循环确保问题在交接前捕获。
 
+### smart-exec-plan-workflow — 用 workflow 执行实现计划
+
+把 smart-exec-plan 的流程固化成确定性 workflow 脚本。接收 plan 文档后先做十项文档审查与开发分支确认，再生成固定格式的脚本、讲解 phase 编排，用户确认后由脚本一次性执行全部 Stage。
+
+phase 顺序固定为 Scout → TestDesign → Implement → SpecReview → QualityReview → Commit → StageReview → Verify → Merge，Stage 与 Task 严格串行（同一工作区，并行会互相覆盖），Git 写操作只允许出现在 Commit 与 Merge 两个 phase。失败测试与实现由两个独立代理完成，红阶段因此是客观事实。Stage 验证只记录、由 Stage 审查判断失败归属；最终验证是硬门槛，失败时追加修复 Task，超过轮次上限即停止上报。
+
 ### code-review — 代码审查
 
 定义三个层面的代码审查规范：何时发起独立审查或处理外部反馈、如何处理收到的审查反馈（禁止表演性同意，要求技术确认或有理有据的反驳）、审查者提示模板。计划内 Task、Stage 和最终审查由 subagent-driven-development 负责，避免重复调用。
 
 外部反馈被视为需要评估的建议而非需要服从的命令。提供 spec-reviewer 和 code-quality-reviewer 两类审查模板。
+
+### audit-and-grill — 一致性审计与对抗性复核
+
+把文档的每句声明拆成可判定的原子条目，逐条采集实现证据并判定为一致 / 矛盾 / 缺失 / 无法验证，再为每个非一致结论分派独立复核者尝试推翻。复核者只看声明原文与判定结果，不拿审查者的推理过程，避免结论被原作者的措辞带偏。
+
+最后做缺口扫描：找出文档声称覆盖但实际未审计的部分。适用于设计文档与代码、计划与实现的对照，以及交付前的承诺核查。
+
+### branch-brief — 分支简报
+
+为当前分支生成可交付他人的简报：相对基线分支的 diff 规模（文件数、新增/删除行数、commit 数、按目录聚合）、按主题归类的主要更新、breaking change 分类判定、其他人必须了解的迁移与环境变化、需要人工验证的清单。
+
+主题归类以实际 diff 为准，commit message 夸大或遗漏时以代码为准并标注。breaking change 无法确定时标为「待确认」，不默认安全。产出 `docs/briefs/YYYY-MM-DD-<branch-slug>.md`。
+
+### branch-review — 分支总结与双视角 review
+
+总结当前分支实现、修改了什么，并从「目的是否完成」和「代码质量」两个角度分别判定。目标声明只从 brainstorming 索引、设计、计划、ADR 中提取，不以 commit message 或计划勾选作为实现证据。
+
+内联 audit-and-grill 的一致性对照与对抗性复核流程，把分支目标逐条映射到实际实现；完成度结论固定为 COMPLETE / PARTIAL / INCOMPLETE，质量结论固定为可合并 / 有条件合并 / 不可合并，两个维度分别独立判定。
 
 ### systematic-debugging — 系统化调试
 
@@ -201,15 +225,21 @@ brainstorming ──→ grill-with-docs ──→ writing-plans
                               ↓                      ↓
                          测试 / 验证 ←── test-driven-development
                               ↓
+                       交付前核查
+                              ↓
+              branch-brief ──→ branch-review ──→ audit-and-grill
+                              ↓
                     交付 & 持续改进
 ```
+
+writing-plans 之后的另一条执行路径：`smart-exec-plan-workflow` 生成固定格式 workflow 脚本，由脚本而非主代理推进全部 Stage。
 
 辅助技能在各阶段注入：
 - **语言层**：typescript-magician、react-best-practices、node-best-practices
 - **设计层**：design-taste-frontend、morandi-color-scheme
 - **搜索层**：search-layer、content-extract、mineru-extract
 - **工具层**：agent-browser、yt-dlp-downloader、md2html、linting-neostandard
-- **质量层**：full-output-enforcement、systematic-debugging、dispatching-parallel-agents
+- **质量层**：full-output-enforcement、systematic-debugging、dispatching-parallel-agents、audit-and-grill
 - **管理**：pi-session-summarizer、ui-component-library-showcase
 
 ---
@@ -218,9 +248,9 @@ brainstorming ──→ grill-with-docs ──→ writing-plans
 
 | 分类 | 技能数 | 技能名称 |
 |------|--------|---------|
-| 工作流 | 9 | brainstorming, grill-with-docs, writing-plans, test-driven-development, executing-plans, subagent-driven-development, code-review, systematic-debugging, dispatching-parallel-agents |
+| 工作流 | 13 | brainstorming, grill-with-docs, writing-plans, test-driven-development, executing-plans, subagent-driven-development, smart-exec-plan-workflow, code-review, audit-and-grill, branch-brief, branch-review, systematic-debugging, dispatching-parallel-agents |
 | 语言与框架 | 5 | typescript-magician, react-best-practices, node-best-practices, design-taste-frontend, frontend-ui-design-morandi-color-scheme |
 | 工具与实用 | 4 | agent-browser, yt-dlp-downloader, md2html, linting-neostandard-eslint9 |
 | 搜索 | 3 | search-layer, content-extract, mineru-extract |
 | 效率与质量 | 4 | full-output-enforcement, pi-session-summarizer, git-smart-commit, ui-component-library-showcase |
-| **总计** | **25** | |
+| **总计** | **29** | |

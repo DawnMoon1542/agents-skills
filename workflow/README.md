@@ -23,6 +23,20 @@ brainstorming
    └── subagent-driven-development
 ```
 
+执行阶段有两条可选路径，同一份计划只能走其中一条：
+
+```text
+smart-exec-plan            主代理逐 Task 分派与判断，适合需要频繁干预
+smart-exec-plan-workflow   生成固定格式 workflow 脚本，由脚本编排全部 Stage
+```
+
+交付前核查：
+
+```text
+branch-brief  →  branch-review  →  audit-and-grill
+交接说明         目的与质量判定     单条声明的一致性核对
+```
+
 ## 技能清单
 
 | 技能 | 职责 |
@@ -31,10 +45,14 @@ brainstorming
 | `grill-with-docs` | 依次对质全部 Stage，设计最终系统状态 |
 | `writing-plans` | 依次生成全部 Stage 的实现计划 |
 | `smart-exec-plan` | 管理开发分支、Task commit 和 Stage `--no-ff` 合并 |
+| `smart-exec-plan-workflow` | 把上述流程固化为 workflow 脚本，审查计划后由脚本连续执行 |
 | `executing-plans` | 解析计划并按 Stage、Task Group、Task、Step 推进 |
 | `test-driven-development` | 在每个 Task 内执行红—绿—重构 |
 | `subagent-driven-development` | 分派实现者并执行 Task、Stage 和最终审查 |
 | `code-review` | 通用代码审查和审查反馈处理 |
+| `audit-and-grill` | 声明级一致性审计与对抗性复核 |
+| `branch-brief` | 生成分支简报，面向他人交接 |
+| `branch-review` | 判定分支目的完成度与代码质量 |
 | `systematic-debugging` | 系统化定位和修复故障 |
 | `dispatching-parallel-agents` | 分派无共享状态的独立任务 |
 
