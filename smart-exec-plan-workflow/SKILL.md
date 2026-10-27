@@ -5,7 +5,7 @@ description: 用 Workflow 执行实现计划——接收用户给出的 plan 文
 
 # 用 workflow 执行实现计划
 
-把 `smart-exec-plan` 的流程固化成一份可执行的 workflow 脚本：Stage 严格串行、Task 严格串行，失败测试编写、实现、规格审查、质量审查、提交、Stage 审查、全量验证、合并全部由脚本编排。模型只负责判断，不负责决定下一步做什么。
+把 `smart-exec-plan` 的流程固化成一份可执行的 workflow 脚本：Stage 严格串行、Task 严格串行，失败测试编写、测试审查、实现、规格与质量并行审查、提交、Stage 审查、全量验证、合并全部由脚本编排。模型只负责判断，不负责决定下一步做什么。
 
 **开始时声明：** “我正在使用 smart-exec-plan-workflow 技能生成并执行 plan 的 workflow。”
 
@@ -131,7 +131,8 @@ git switch -c <y>
 | `stages` | Stage 编号数组，如 `[1, 2, 3]` |
 | `plans` | Stage 编号到计划路径的映射 |
 | `designs` | Stage 编号到设计路径的映射，没有设计文件时写 `null` |
-| `limits` | 审查轮次、修复 Task 上限，默认 `reviewRounds: 4`、`stageRepairs: 3`、`finalRepairs: 3`（收尾阶段三类修复共享）、`implRetries: 1` |
+| `limits` | 审查轮次、修复 Task 上限，默认 `reviewRounds: 4`（测试审查与实现审查各自适用）、`stageRepairs: 3`、`finalRepairs: 3`（收尾阶段三类修复共享）、`implRetries: 1` |
+| `efforts` | 每类调用的 reasoning effort：`phases` 按 phase 给默认值，`calls` 按调用类型覆盖；缺省时继承主 agent。`model` 不配置，始终继承主 agent。默认值见 orchestration-spec 第 9 节 |
 
 生成时的硬性要求：
 
@@ -139,8 +140,8 @@ git switch -c <y>
 - `meta` 必须是纯字面量，不能出现变量、函数调用、展开或模板插值
 - `meta.phases` 的标题必须与脚本中 `phase` 字段完全一致
 - 仓库约定写进字符串常量（不用 `&&` 串联命令、Python 用 uv、前端用 pnpm、禁止 emoji）
-- 每个 agent 调用都必须带 `phase` 与 `schema`（纯文本步骤除外）
-- Stage 与 Task 严格串行，只用顺序 `await`，不使用 `parallel` / `pipeline`
+- 所有子代理都经由 `call(kind, ...)` 发起，phase 与 effort 由 `CALL_PHASE` 和 `CFG.efforts` 决定；每个调用都必须带 `schema`（纯文本步骤除外）
+- Stage 与 Task 严格串行，只用顺序 `await`；唯一的 `parallel` 是 Review phase 内规格与质量两个只读审查，不使用 `pipeline`
 
 完整格式约束见 [references/orchestration-spec.md](references/orchestration-spec.md)。
 
@@ -149,14 +150,15 @@ git switch -c <y>
 生成脚本后向用户说明以下内容，让用户能在执行前判断流程是否符合预期：
 
 - 每个 phase 做什么、由谁判断、失败如何处理
-- Stage 与 Task 的串行关系，为什么不能并行（同一工作区，多个实现者会互相覆盖）
-- 测试编写与实现为什么拆成两个代理，`NOT_APPLICABLE` 适用于哪些 Task
-- 审查循环的上限与超限后的停止行为
+- Stage 与 Task 的串行关系，为什么不能并行（同一工作区，多个实现者会互相覆盖）；Review 内两个审查为什么可以并行（只读，不改工作区）
+- 测试编写、测试审查与实现为什么拆成三个代理，`NOT_APPLICABLE` 适用于哪些 Task（这类 Task 跳过测试审查）
+- 审查循环：测试审查打回测试编写者；规格与质量并行审查、合并问题清单统一修复、修复后两者都重审；复审附上一轮问题；minor 只记入 concerns；上限与超限后的停止行为
+- 每类调用的 effort 配置，哪些项继承主 agent
 - Stage 验证只记录、由 Stage 审查归因；最终验证是硬门槛及其修复轮次
 - 哪些情况会整体停止（工作区不干净、测试或实现阻塞、缺少红/绿阶段证据、审查超限、最终验证修复超限、合并冲突）
 - 哪些步骤会执行 Git 写操作，写操作由哪些 agent 负责
 - 全部完成后产出什么报告
-- 停止后如何恢复
+- 停止后如何恢复，尤其是 Task 提交前中断留下的未提交改动如何处理
 
 讲解使用表格或阶段清单，按实际脚本内容描述，不要复制模板的通用描述。
 
@@ -176,34 +178,46 @@ workflow 返回结构化报告，包含 `implementationBaseSha`、每个 Stage �
 
 - 成功完成：列出 Stage、Task 数量、merge commit、最终验证命令与结果
 - 中途停止：给出停止的 Stage、Task、原因、已完成范围、工作区状态、`x` 与 `y` 的 SHA
+- 汇总各 Task 的 `concerns`（`DONE_WITH_CONCERNS` 说明与未修复的 `[minor]` 意见），供人工后续处理
 - 不把"部分完成"表述为成功
 - 不自动 push，不删除分支
 
 Stage 已合并到 `x` 后发生中断时不自动 revert；中间 Stage 可能处于暂时不可部署状态，如实说明剩余 Stage。
+
+## 8. 中断恢复
+
+| 中断位置 | 工作区状态 | 处理 |
+|---|---|---|
+| Task 提交前（TestDesign 到 Review） | 残留该 Task 未提交的测试或实现，重跑时 preflight 会因不干净而停止 | 列出残留文件、所属 Task、已有的红/绿阶段证据，交用户决定：保留并手动完成提交后重跑，或由用户自行丢弃后重跑 |
+| Task 已提交、Stage 未完成 | 干净，进度清单已勾选 | 直接重跑，Scout 只会提取未勾选 Task |
+| 追加修复 Task 后、修复提交前 | 计划文件与修复改动未提交 | 同“Task 提交前”，计划追加内容一并报告 |
+| Stage 状态 amend 或合并阶段 | 视具体步骤 | 先确认 `y`、`x` 的 HEAD 与索引执行状态，再决定从哪个 Stage 重跑 |
+
+脚本未改动时优先用 `resumeFromRunId` 复用已完成调用；脚本改动后必须新开 run。任何情况下都不自动执行 `git stash`、`git reset`、`git clean`、`git restore`。
 
 ## 固定编排契约
 
 流程顺序固定，任何项目都不得增删 phase 或调整顺序：
 
 ```text
-Scout → TestDesign → Implement → SpecReview → QualityReview → Commit → StageReview → Verify → Merge
+Scout → TestDesign → TestReview → Implement → Review → Commit → StageReview → Verify → Merge
 ```
 
 | Phase | 负责 | 不负责 |
 |---|---|---|
 | Scout | 基线检查、Stage 基线 SHA、提取未完成 Task 全文 | 修改文件 |
-| TestDesign | 只写会失败的目标测试，确认红阶段原因正确 | 修改生产代码 |
+| TestDesign | 只写会失败的目标测试，确认红阶段原因正确；按测试审查意见修复测试 | 修改生产代码 |
+| TestReview | 实现前审查测试是否必要、充分、符合 Task 与设计、红阶段有效 | 修改文件 |
 | Implement | 在已有失败测试上实现功能使其转绿，修复审查问题 | 删改测试迎合实现、提交、切换分支 |
-| SpecReview | 对照 Task 与设计判定缺失、多余、兼容层、数据风险 | 代码质量、风格 |
-| QualityReview | 规格通过后判定正确性、清晰度、测试质量 | 规格符合性 |
+| Review | 规格审查（缺失、多余、兼容层、数据风险）与质量审查（正确性、清晰度、测试质量）并行，两者都通过才提交；minor 不阻塞 | 修改文件 |
 | Commit | 勾选进度、限定范围 `git add`、提交；Stage 执行状态 amend | 修改实现 |
 | StageReview | Stage 整体覆盖、Task 间集成、最终状态方向、Stage 验证失败归因；最终审查 | 修改文件 |
 | Verify | 运行计划中的真实验证命令 | 修复、猜测原因 |
 | Merge | `--no-ff` 合并、冲突回滚 | 选择冲突内容 |
 
-每个 Stage 内循环：Task 提取 → 写失败测试 → 实现转绿 → 规格审查 → 质量审查 → 提交，直至计划中的 Task 全部完成；再执行 Stage 验证、Stage 审查与修复循环；最后一个 Stage 追加最终验证与最终审查；之后状态 amend、合并。
+每个 Stage 内循环：Task 提取 → 写失败测试 → 测试审查 → 实现转绿 → 规格与质量并行审查 → 提交，直至计划中的 Task 全部完成；再执行 Stage 验证、Stage 审查与修复循环；最后一个 Stage 追加最终验证与最终审查；之后状态 amend、合并。
 
-测试与实现拆给两个独立代理：测试编写者不能改生产代码，红阶段因此是工作区里的客观事实，不是实现者的自述；实现者不能删改测试，绿阶段才有意义。纯文档、静态资源等没有测试 Step 的 Task 由测试编写者返回 `NOT_APPLICABLE` 并说明理由。
+测试与实现拆给两个独立代理：测试编写者不能改生产代码，红阶段因此是工作区里的客观事实，不是实现者的自述；实现者不能删改测试，绿阶段才有意义。正因为实现者不能改测试，测试写偏会直接把实现带偏，所以测试在实现前先经过独立的测试审查，未通过时打回测试编写者修复。纯文档、静态资源等没有测试 Step 的 Task 由测试编写者返回 `NOT_APPLICABLE` 并说明理由，跳过测试审查。
 
 验证分两种：
 
@@ -223,7 +237,8 @@ Scout → TestDesign → Implement → SpecReview → QualityReview → Commit �
 - 工作区不干净，或当前分支不是约定的 `y`
 - 测试编写者或实现者返回 BLOCKED / NEEDS_CONTEXT 且补充上下文后仍未解决
 - 测试编写者未给出红阶段证据或测试文件，实现者未给出绿阶段证据
-- 规格或质量审查在轮次上限内未通过
+- 测试审查在轮次上限内未通过
+- 规格与质量审查在轮次上限内未同时通过
 - Stage 审查在修复上限内未通过（Stage 验证失败本身不停止，由审查归因）
 - 收尾阶段修复（最终验证失败、收尾复审、最终审查）用尽 `finalRepairs` 轮仍未通过
 - 合并冲突，或基线分支 HEAD 与预期不一致
@@ -232,10 +247,10 @@ Scout → TestDesign → Implement → SpecReview → QualityReview → Commit �
 ## 禁止事项
 
 - 在文档审查未通过时生成或执行脚本
-- 修改模板的 phase 顺序、增删 phase、把 Stage 或 Task 改成并行
+- 修改模板的 phase 顺序、增删 phase、把 Stage、Task 或实现、提交步骤改成并行
 - 在执行中修改脚本并使用相同 runId 掩盖改动
 - 让测试编写者、实现者或审查者执行 Git 写操作
-- 让测试编写者改生产代码，或让实现者删改测试
+- 让测试编写者或测试修复者改生产代码，或让实现者删改测试
 - 使用计划中没有的验证命令
 - 自动 push、删除分支、覆盖同名分支
 - 自动 `git stash`、`git reset`、`git clean`

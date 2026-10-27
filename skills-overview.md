@@ -58,7 +58,7 @@
 
 把 smart-exec-plan 的流程固化成确定性 workflow 脚本。接收 plan 文档后先做十项文档审查与开发分支确认，再生成固定格式的脚本、讲解 phase 编排，用户确认后由脚本一次性执行全部 Stage。
 
-phase 顺序固定为 Scout → TestDesign → Implement → SpecReview → QualityReview → Commit → StageReview → Verify → Merge，Stage 与 Task 严格串行（同一工作区，并行会互相覆盖），Git 写操作只允许出现在 Commit 与 Merge 两个 phase。失败测试与实现由两个独立代理完成，红阶段因此是客观事实。Stage 验证只记录、由 Stage 审查判断失败归属；最终验证是硬门槛，失败时追加修复 Task，超过轮次上限即停止上报。
+phase 顺序固定为 Scout → TestDesign → TestReview → Implement → Review → Commit → StageReview → Verify → Merge，Stage 与 Task 严格串行（同一工作区，并行会互相覆盖），只有 Review phase 内规格与质量两个只读审查并行，Git 写操作只允许出现在 Commit 与 Merge 两个 phase。失败测试与实现由两个独立代理完成，红阶段因此是客观事实；测试在实现前先经过独立审查，未通过时打回修复。实现审查的 minor 意见不阻塞提交，只记入 concerns。每类调用的 effort 可在 CFG 中配置，model 继承主 agent。Stage 验证只记录、由 Stage 审查判断失败归属；最终验证是硬门槛，失败时追加修复 Task，超过轮次上限即停止上报。
 
 ### code-review — 代码审查
 

@@ -5,9 +5,9 @@ export const meta = {
   phases: [
     { title: 'Scout', detail: '基线检查，记录 Stage 基线并提取未完成 Task 全文' },
     { title: 'TestDesign', detail: '先只写会失败的目标测试，确认红阶段原因正确' },
+    { title: 'TestReview', detail: '审查测试是否必要、充分、符合 Task 要求' },
     { title: 'Implement', detail: '在已有失败测试上实现功能使其转绿，不执行 Git 写操作' },
-    { title: 'SpecReview', detail: '审查差异是否符合 Task 与设计，无计划外内容' },
-    { title: 'QualityReview', detail: '规格通过后审查代码质量' },
+    { title: 'Review', detail: '规格审查与质量审查并行，两者都通过才提交' },
     { title: 'Commit', detail: '更新计划进度并提交当前 Task，Stage 状态 amend' },
     { title: 'StageReview', detail: 'Stage 整体审查与最终审查，必要时追加修复 Task' },
     { title: 'Verify', detail: 'Stage 记录性验证与最终全量验证' },
@@ -45,6 +45,57 @@ const CFG = {
     finalRepairs: 3, // 收尾阶段验证失败、Stage 复审与最终审查三类修复共享该上限
     implRetries: 1,
   },
+  // 每类调用的 reasoning effort：calls 按调用类型覆盖 phases 的默认值。
+  // 值为 null 或缺省时不传 effort，继承主 agent；model 始终继承主 agent，不在此配置。
+  efforts: {
+    phases: {
+      Scout: 'low',
+      TestDesign: 'high',
+      TestReview: 'high',
+      Implement: 'high',
+      Review: 'high',
+      Commit: 'low',
+      StageReview: 'xhigh',
+      Verify: 'low',
+      Merge: 'low',
+    },
+    calls: {
+      scout: 'medium',
+      append: 'medium',
+    },
+  },
+}
+
+// 调用类型 -> phase。effort 先查 calls[kind]，再查 phases[phase]。
+const CALL_PHASE = {
+  preflight: 'Scout',
+  readSha: 'Scout',
+  scout: 'Scout',
+  test: 'TestDesign',
+  testFix: 'TestDesign',
+  testReview: 'TestReview',
+  impl: 'Implement',
+  reviewFix: 'Implement',
+  spec: 'Review',
+  quality: 'Review',
+  commit: 'Commit',
+  stageStatus: 'Commit',
+  stageReview: 'StageReview',
+  finalReview: 'StageReview',
+  append: 'StageReview',
+  verify: 'Verify',
+  merge: 'Merge',
+}
+
+// 所有子代理都经由 call 发起，phase 由调用类型决定，避免 phase 与 effort 各写一遍出现不一致。
+// readSha 在 Verify 收尾时也会用到，因此允许显式传 phase 覆盖展示分组，effort 仍按调用类型取值。
+const call = (kind, prompt, opts = {}) => {
+  const phaseName = opts.phase || CALL_PHASE[kind]
+  const efforts = CFG.efforts || {}
+  const effort = (efforts.calls || {})[kind] || (efforts.phases || {})[CALL_PHASE[kind]] || null
+  const options = { ...opts, phase: phaseName }
+  if (effort) options.effort = effort
+  return agent(prompt, options)
 }
 
 const planPath = (stage) => CFG.plans[stage]
@@ -140,6 +191,19 @@ const TEST_SCHEMA = {
     missingContext: { type: 'string' },
   },
   required: ['status', 'baseSha', 'summary', 'redPhase', 'testFiles'],
+}
+
+
+const TEST_REVIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['APPROVED', 'NEEDS_CHANGES'] },
+    necessary: { type: 'array', items: { type: 'string' } },
+    sufficient: { type: 'array', items: { type: 'string' } },
+    alignment: { type: 'array', items: { type: 'string' } },
+    redValidity: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['verdict', 'necessary', 'sufficient', 'alignment', 'redValidity'],
 }
 
 const SPEC_SCHEMA = {
@@ -281,6 +345,55 @@ ${contextLine}
 输出严格符合 schema。不要修改任何文件。`
 
 
+
+const testReviewPrompt = ({ stage, task, testReport }) => `你在审查 ${task.id}：${task.title} 的测试（测试已写完，进入实现之前的审查）。仓库 ${CFG.repo}。
+
+## 输入
+
+- Task 摘要：${task.title}
+- Task 完整说明：\n${task.body}
+${designLine(stage)}
+${contextLine}
+- 测试编写者报告：summary=${testReport.summary}；testFiles=${testReport.testFiles.join('、')}
+- 红阶段记录：${testReport.redPhase}
+- BASE_SHA：${testReport.baseSha}
+
+## 审查范围
+
+读取测试文件内容与 git diff ${testReport.baseSha}，不要信任测试编写者的自述。
+
+## 检查
+
+1. 必要性：测试覆盖的行为是否为 Task 要求的目标行为，是否测试了 Task 明确不需要的功能。
+2. 充分性：Task 列出的正常路径、边界条件、异常路径是否都有断言，是否遗漏 Task 要求的场景。
+3. 一致性：测试调用的接口、字段、命名是否与 Task 描述或设计一致，是否与术语表冲突。
+4. 红阶段有效性：失败原因是否为“功能未实现”（导入失败、属性不存在、返回值不符、断言不成立），而不是测试自身的语法错误、拼写错误或环境问题。
+5. 断言质量：是否断言真实行为而不是只断言 mock 被调用，期望值是否来自 Task 或设计而不是猜测。
+
+问题分别写入 necessary（多余或不必要的测试）、sufficient（遗漏的场景）、alignment（与 Task、设计、术语表不一致）、redValidity（红阶段无效或断言质量问题）。只报告会让实现跑偏或让验收失真的问题，不报告纯风格意见；四项都为空时 verdict 为 APPROVED。
+
+不要修改文件，不要执行 Git 写操作。输出严格符合 schema。`
+
+const testFixPrompt = ({ stage, task, issues }) => `你在修复 ${task.id}：${task.title} 的测试问题。仓库 ${CFG.repo}，当前分支 ${CFG.devBranch}。
+
+## 问题清单
+
+${issues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}
+
+## Task 要求（用于判断修复边界）
+
+${task.body}
+
+${taskContext({ stage, task, extraContext: '' })}
+
+只修测试文件，严禁修改生产代码。修复后重新运行测试，确认失败原因仍是“功能未实现”，把真实输出记入 redPhase。
+
+${GIT_BAN}
+
+${GIT_RULES}
+
+返回同样符合 schema：status、baseSha（保持原 BASE_SHA 不变）、summary、redPhase、testFiles（修复后的完整测试文件清单）。`
+
 const taskContext = ({ stage, task, extraContext }) => `## 上下文
 
 ${CFG.index ? `- 完整需求索引：${CFG.index}` : ''}
@@ -397,7 +510,7 @@ ${GIT_RULES}
 
 返回同样符合 schema：status、baseSha（保持原 BASE_SHA 不变）、summary、redPhase、greenPhase、changedFiles。`
 
-const specPrompt = ({ stage, task, baseSha, impl }) => `你在做 ${task.id}：${task.title} 的规格审查（先于代码质量审查）。仓库 ${CFG.repo}。
+const specPrompt = ({ stage, task, baseSha, impl }) => `你在做 ${task.id}：${task.title} 的规格审查（与代码质量审查并行，只判断规格符合性，不评价代码质量）。仓库 ${CFG.repo}。
 
 ## 输入
 
@@ -425,7 +538,7 @@ ${CFG.index ? `- 需求索引：${CFG.index}` : ''}
 
 不要修改任何文件，不要执行 Git 写操作。输出严格符合 schema。`
 
-const qualityPrompt = ({ stage, task, baseSha, impl, testReport }) => `你在做 ${task.id}：${task.title} 的代码质量审查（规格审查已通过）。仓库 ${CFG.repo}。
+const qualityPrompt = ({ stage, task, baseSha, impl, testReport }) => `你在做 ${task.id}：${task.title} 的代码质量审查（与规格审查并行，只判断代码质量，规格符合性由规格审查负责）。仓库 ${CFG.repo}。
 
 ## 输入
 
@@ -450,9 +563,11 @@ ${designLine(stage)}
 
 当前 Task 无法完整构建或无法部署不是质量问题，前提是未完成集成属于后续 Task；本 Task 自身测试失败、计划外失败或数据风险仍阻塞。
 
+分级口径：critical 是错误行为、数据风险或测试被无理由弱化；important 是会影响后续维护或集成的问题；minor 是命名、注释、局部写法等不影响行为的意见。只有 critical 或 important 非空时 verdict 才为 NEEDS_CHANGES；只有 minor 时 verdict 为 APPROVED，minor 会记入 concerns 留待人工处理，不触发修复。
+
 不要修改任何文件，不要执行 Git 写操作。输出严格符合 schema。`
 
-const commitPrompt = ({ stage, task, allowPlanAppend }) => `你负责提交 ${task.id}：${task.title}。仓库 ${CFG.repo}，当前分支 ${CFG.devBranch}。实现、规格审查、质量审查均已通过。
+const commitPrompt = ({ stage, task, allowPlanAppend }) => `你负责提交 ${task.id}：${task.title}。仓库 ${CFG.repo}，当前分支 ${CFG.devBranch}。测试审查、实现、规格审查、质量审查均已通过。
 
 ## 步骤
 
@@ -593,66 +708,121 @@ ${GIT_RULES}
 不要修改任何文件，不要 push，不要删除分支。输出严格符合 schema。`
 
 
+// 复审时附上上一轮问题：先逐条核对是否解决，再看修复是否引入新问题；
+// 不允许对上一轮已看过的代码追加新的非阻塞意见，否则每轮都会冒出新问题而无法收敛。
+const previousIssuesBlock = (previousIssues) =>
+  previousIssues && previousIssues.length
+    ? `\n\n## 上一轮问题\n\n${previousIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\n\n这是复审。先逐条确认上述问题是否已解决，未解决的继续列出；再检查本轮修复是否引入新问题。上一轮已审查过且未提出的代码，本轮不再新增问题，除非属于阻塞级缺陷（规格缺失、数据风险、critical）。`
+    : ''
+
+const isBlockedStatus = (result) => result.status === 'BLOCKED' || result.status === 'NEEDS_CONTEXT'
+
 const fail = (blocked) => {
   report.blocked = blocked
 }
 
-async function runReviewLoop(kind, task, stage, baseSha, initialImpl, testReport) {
-  const isSpec = kind === 'spec'
+// 规格与质量审查都是只读步骤，同一轮内并行执行；两者都通过才进入提交。
+// 任一未通过时合并两份问题清单交给同一个修复者，修复后两者都重新审查，
+// 因为针对一方的修复可能破坏另一方已通过的结论。
+// minor 不触发修复，只保留最后一轮的 minor 写入 concerns，避免已修掉的旧意见混入报告。
+async function runReviewLoop(task, stage, baseSha, initialImpl, testReport) {
   let impl = initialImpl
+  let previousIssues = null
   for (let round = 0; round < CFG.limits.reviewRounds; round++) {
-    const prompt = isSpec
-      ? specPrompt({ stage, task, baseSha, impl })
-      : qualityPrompt({ stage, task, baseSha, impl, testReport })
-    const result = await agent(prompt, {
-      label: `${kind}:${task.id}${round ? `#${round}` : ''}`,
-      phase: isSpec ? 'SpecReview' : 'QualityReview',
-      schema: isSpec ? SPEC_SCHEMA : QUALITY_SCHEMA,
-    })
-    if (!result) return { ok: false, reason: `${kind} reviewer 无返回` }
+    const suffix = round ? `#${round}` : ''
+    const previous = previousIssuesBlock(previousIssues)
+    const [spec, quality] = await parallel([
+      () => call('spec', specPrompt({ stage, task, baseSha, impl }) + previous, {
+        label: `spec:${task.id}${suffix}`,
+        schema: SPEC_SCHEMA,
+      }),
+      () => call('quality', qualityPrompt({ stage, task, baseSha, impl, testReport }) + previous, {
+        label: `quality:${task.id}${suffix}`,
+        schema: QUALITY_SCHEMA,
+      }),
+    ])
+    if (!spec) return { ok: false, reason: 'spec reviewer 无返回' }
+    if (!quality) return { ok: false, reason: 'quality reviewer 无返回' }
 
-    const passed = isSpec ? result.status === 'SPEC_COMPLIANT' : result.verdict === 'APPROVED'
-    if (passed) return { ok: true, impl }
+    const minorIssues = quality.minor.map((issue) => `[minor] ${issue}`)
+    const specIssues = spec.status === 'SPEC_COMPLIANT' ? [] : [...spec.missing, ...spec.extra, ...spec.designDeviations, ...spec.dataRisks]
+    // 质量结论以 critical/important 为准：审查者误把只有 minor 的结果判成 NEEDS_CHANGES 时按通过处理。
+    const qualityIssues = [...quality.critical, ...quality.important]
+    if (spec.status !== 'SPEC_COMPLIANT' && !specIssues.length) return { ok: false, reason: 'spec 审查未通过但未给出具体问题' }
+    if (!specIssues.length && !qualityIssues.length) return { ok: true, impl, minorIssues }
 
-    const issues = isSpec
-      ? [...result.missing, ...result.extra, ...result.designDeviations, ...result.dataRisks]
-      : [...result.critical, ...result.important, ...result.minor]
-    if (!issues.length) return { ok: false, reason: `${kind} 审查未通过但未给出具体问题` }
-    log(`${task.id} ${isSpec ? '规格' : '质量'}审查 NEEDS_CHANGES（第 ${round + 1} 轮）：${issues.length} 条`)
+    const issues = [...specIssues.map((issue) => `[规格] ${issue}`), ...qualityIssues.map((issue) => `[质量] ${issue}`)]
+    log(`${task.id} 审查 NEEDS_CHANGES（第 ${round + 1} 轮）：规格 ${specIssues.length} 条，质量 ${qualityIssues.length} 条`)
+    previousIssues = issues
+    // 最后一轮仍未通过时不再修复：修复后没有复审，结果无法确认。
+    if (round === CFG.limits.reviewRounds - 1) break
 
-    const fixed = await agent(fixPrompt({ task, reviewKind: isSpec ? '规格' : '代码质量', issues, testReport }), {
-      label: `${kind}-fix:${task.id}#${round + 1}`,
-      phase: 'Implement',
+    const fixed = await call('reviewFix', fixPrompt({ task, reviewKind: '规格与代码质量', issues, testReport }), {
+      label: `review-fix:${task.id}#${round + 1}`,
       schema: IMPL_SCHEMA,
     })
-    if (!fixed) return { ok: false, reason: `${kind} 问题修复无返回` }
-    if (fixed.status === 'BLOCKED' || fixed.status === 'NEEDS_CONTEXT') {
-      return { ok: false, reason: `${kind} 问题修复失败：${fixed.blockingReason || fixed.missingContext}` }
+    if (!fixed) return { ok: false, reason: '审查问题修复无返回' }
+    if (isBlockedStatus(fixed)) {
+      return { ok: false, reason: `审查问题修复失败：${fixed.blockingReason || fixed.missingContext}` }
     }
     impl = fixed
   }
-  return { ok: false, reason: `${kind} 审查在 ${CFG.limits.reviewRounds} 轮内未通过` }
+  return { ok: false, reason: `规格与质量审查在 ${CFG.limits.reviewRounds} 轮内未同时通过：${(previousIssues || []).join('；')}` }
+}
+
+// 测试审查循环：未通过时打回测试编写者修复，复审附上一轮问题。baseSha 固定不变，保证 Task 审查范围不漂移。
+async function runTestReviewLoop(stage, task, initialTests) {
+  let tests = initialTests
+  let previousIssues = null
+  for (let round = 0; round < CFG.limits.reviewRounds; round++) {
+    const review = await call('testReview', testReviewPrompt({ stage, task, testReport: tests }) + previousIssuesBlock(previousIssues), {
+      label: `test-review:${task.id}${round ? `#${round}` : ''}`,
+      schema: TEST_REVIEW_SCHEMA,
+    })
+    if (!review) return { ok: false, reason: '测试审查无返回' }
+    const issues = [
+      ...review.necessary.map((issue) => `[必要性] ${issue}`),
+      ...review.sufficient.map((issue) => `[充分性] ${issue}`),
+      ...review.alignment.map((issue) => `[一致性] ${issue}`),
+      ...review.redValidity.map((issue) => `[红阶段] ${issue}`),
+    ]
+    if (review.verdict === 'APPROVED' && !issues.length) return { ok: true, tests }
+    if (!issues.length) return { ok: false, reason: '测试审查未通过但未给出具体问题' }
+    log(`${task.id} 测试审查 NEEDS_CHANGES（第 ${round + 1} 轮）：${issues.length} 条`)
+    previousIssues = issues
+    // 最后一轮仍未通过时不再修复：修复后没有复审，结果无法确认。
+    if (round === CFG.limits.reviewRounds - 1) break
+
+    const fixed = await call('testFix', testFixPrompt({ stage, task, issues }), {
+      label: `test-fix:${task.id}#${round + 1}`,
+      schema: TEST_SCHEMA,
+    })
+    if (!fixed) return { ok: false, reason: '测试修复无返回' }
+    if (isBlockedStatus(fixed)) return { ok: false, reason: `测试修复阻塞：${fixed.blockingReason || fixed.missingContext}` }
+    if (fixed.status !== 'TESTS_WRITTEN' || !fixed.redPhase || !fixed.testFiles.length) {
+      return { ok: false, reason: `${task.id} 测试修复后缺少红阶段证据或测试文件` }
+    }
+    tests = { ...fixed, baseSha: tests.baseSha }
+  }
+  return { ok: false, reason: `测试审查在 ${CFG.limits.reviewRounds} 轮内未通过：${(previousIssues || []).join('；')}` }
 }
 
 // 阻塞类返回最多补 implRetries 次上下文，每次都交给全新代理，避免沿用上一次的错误假设。
-async function withContextRetry(run, label, phaseName, schema, isBlocked, stage) {
-  let result = await agent(run(''), { label, phase: phaseName, schema })
-  for (let retry = 0; result && isBlocked(result) && retry < CFG.limits.implRetries; retry++) {
-    result = await agent(run(extraContextFor(stage, result)), { label: `${label}-retry#${retry + 1}`, phase: phaseName, schema })
+async function withContextRetry(run, label, kind, schema, stage) {
+  let result = await call(kind, run(''), { label, schema })
+  for (let retry = 0; result && isBlockedStatus(result) && retry < CFG.limits.implRetries; retry++) {
+    result = await call(kind, run(extraContextFor(stage, result)), { label: `${label}-retry#${retry + 1}`, schema })
   }
   return result
 }
 
-const isBlockedStatus = (result) => result.status === 'BLOCKED' || result.status === 'NEEDS_CONTEXT'
-
 async function implementOneTask(stage, task, allowPlanAppend) {
   // 第一步：只写失败测试。测试编写者不得改生产代码，因此红阶段是工作区里的客观事实。
-  const tests = await withContextRetry(
+  let tests = await withContextRetry(
     (extraContext) => testPrompt({ stage, task, extraContext }),
     `test:${task.id}`,
-    'TestDesign',
+    'test',
     TEST_SCHEMA,
-    isBlockedStatus,
     stage,
   )
   if (!tests) return { ok: false, reason: '测试编写者无返回' }
@@ -662,6 +832,11 @@ async function implementOneTask(stage, task, allowPlanAppend) {
     if (!tests.redPhase) return { ok: false, reason: `${task.id} 测试编写者未提供红阶段证据` }
     if (!tests.testFiles.length) return { ok: false, reason: `${task.id} 测试编写者未返回测试文件清单` }
     log(`${task.id} 红阶段就绪：${tests.testFiles.length} 个测试文件`)
+
+    // 测试审查通过后才进入实现，避免实现者被迫迎合错误或不充分的测试。
+    const testReview = await runTestReviewLoop(stage, task, tests)
+    if (!testReview.ok) return { ok: false, reason: testReview.reason }
+    tests = testReview.tests
   } else {
     log(`${task.id} 不适用测试：${tests.redPhase}`)
   }
@@ -670,9 +845,8 @@ async function implementOneTask(stage, task, allowPlanAppend) {
   const impl = await withContextRetry(
     (extraContext) => implPrompt({ stage, task, testReport: tests, extraContext }),
     `impl:${task.id}`,
-    'Implement',
+    'impl',
     IMPL_SCHEMA,
-    isBlockedStatus,
     stage,
   )
   if (!impl) return { ok: false, reason: '实现者无返回' }
@@ -682,31 +856,31 @@ async function implementOneTask(stage, task, allowPlanAppend) {
   // 审查范围固定从测试阶段开始前的 HEAD 起算，测试与实现差异一起纳入审查。
   const baseSha = tests.baseSha
 
-  const spec = await runReviewLoop('spec', task, stage, baseSha, impl, tests)
-  if (!spec.ok) return { ok: false, reason: spec.reason }
+  const review = await runReviewLoop(task, stage, baseSha, impl, tests)
+  if (!review.ok) return { ok: false, reason: review.reason }
 
-  const quality = await runReviewLoop('quality', task, stage, baseSha, spec.impl, tests)
-  if (!quality.ok) return { ok: false, reason: quality.reason }
-
-  const commit = await agent(commitPrompt({ stage, task, allowPlanAppend }), {
+  const commit = await call('commit', commitPrompt({ stage, task, allowPlanAppend }), {
     label: `commit:${task.id}`,
-    phase: 'Commit',
     schema: COMMIT_SCHEMA,
   })
   if (!commit || !commit.committed) return { ok: false, reason: `提交失败：${commit ? commit.error : '无返回'}` }
   if (!commit.cleanAfter) return { ok: false, reason: `${task.id} 提交后工作区不干净` }
 
   log(`${task.id} 已提交 ${commit.sha.slice(0, 8)}：${(commit.commitMessage || task.commitMessage).split('\n')[0]}`)
+  const allConcerns = [
+    ...(review.impl.status === 'DONE_WITH_CONCERNS' ? [review.impl.summary] : []),
+    ...(review.minorIssues || []),
+  ]
   return {
     ok: true,
     sha: commit.sha,
-    concerns: quality.impl.status === 'DONE_WITH_CONCERNS' ? quality.impl.summary : '',
+    concerns: allConcerns.join(' | '),
   }
 }
 
 // allowDirtyPlan：追加修复 Task 后计划文件必然处于未提交状态，此时只允许计划文件是脏的。
 async function runStageTasks({ stage, stageReport, allowDirtyPlan, label }) {
-  const plan = await agent(scoutPrompt(stage), { label, phase: 'Scout', schema: TASK_LIST_SCHEMA })
+  const plan = await call('scout', scoutPrompt(stage), { label, schema: TASK_LIST_SCHEMA })
   if (!plan) return { ok: false, reason: 'scout 无返回' }
 
   const unexpected = allowDirtyPlan ? plan.dirtyFiles.filter((file) => file !== planPath(stage)) : plan.dirtyFiles
@@ -724,11 +898,10 @@ async function runStageTasks({ stage, stageReport, allowDirtyPlan, label }) {
   return { ok: true, stageTitle: plan.stageTitle }
 }
 
-// 追加修复 Task 并走完标准 Task 循环（测试、实现、双审查、提交）。
+// 追加修复 Task 并走完标准 Task 循环（测试、测试审查、实现、并行审查、提交）。
 async function repairWith({ stage, stageReport, issues, fixTasks, source, label }) {
-  const appended = await agent(stageAppendPrompt({ stage, review: { issues, fixTasks }, source }), {
+  const appended = await call('append', stageAppendPrompt({ stage, review: { issues, fixTasks }, source }), {
     label: `append-${label}`,
-    phase: 'StageReview',
   })
   if (!appended) return { ok: false, reason: '追加修复 Task 失败' }
   return runStageTasks({ stage, stageReport, allowDirtyPlan: true, label: `scout-${label}` })
@@ -762,7 +935,7 @@ if (mergeEnabled && CFG.devBranch === CFG.baseBranch) {
 }
 
 // ---- Scout：基线检查，任何不满足都直接停止，不带着脏工作区开始 ----
-const preflight = await agent(preflightPrompt(), { label: 'preflight', phase: 'Scout', schema: PREFLIGHT_SCHEMA })
+const preflight = await call('preflight', preflightPrompt(), { label: 'preflight', schema: PREFLIGHT_SCHEMA })
 if (!preflight) {
   fail({ stage: 'preflight', reason: '基线检查无返回' })
   return report
@@ -780,7 +953,7 @@ log(`IMPLEMENTATION_BASE_SHA=${preflight.headSha}`)
 
 let expectedBaseSha = ''
 if (mergeEnabled) {
-  const baseHead = await agent(readShaPrompt(CFG.baseBranch), { label: 'base-head:init', phase: 'Scout' })
+  const baseHead = await call('readSha', readShaPrompt(CFG.baseBranch), { label: 'base-head:init' })
   expectedBaseSha = baseHead ? baseHead.trim() : ''
   if (!expectedBaseSha) {
     fail({ stage: 'preflight', reason: `无法读取基线分支 ${CFG.baseBranch} 的 HEAD` })
@@ -803,7 +976,7 @@ for (const stage of stageList) {
   // 先登记再执行，任何 break 路径都不需要再补 push，报告里每个 Stage 只出现一次。
   report.stages.push(stageReport)
 
-  const headNow = await agent(readShaPrompt('HEAD'), { label: `base:stage-${stage}`, phase: 'Scout' })
+  const headNow = await call('readSha', readShaPrompt('HEAD'), { label: `base:stage-${stage}` })
   stageReport.stageBaseSha = headNow ? headNow.trim() : ''
   if (!stageReport.stageBaseSha) {
     fail({ stage, reason: '无法读取 Stage 基线 SHA' })
@@ -818,13 +991,12 @@ for (const stage of stageList) {
   stageReport.title = tasks.stageTitle || `Stage ${stage}`
 
   // ---- Verify：Stage 验证只做记录，交给 Stage 审查归因 ----
-  stageReport.verify = await agent(verifyPrompt(`Stage ${stage}`), { label: `verify:stage-${stage}`, phase: 'Verify', schema: VERIFY_SCHEMA })
+  stageReport.verify = await call('verify', verifyPrompt(`Stage ${stage}`), { label: `verify:stage-${stage}`, schema: VERIFY_SCHEMA })
   if (stageReport.verify && !stageReport.verify.passed) log(`Stage ${stage} 全量验证未通过，交 Stage 审查归因`)
 
   // ---- StageReview：审查驱动修复，修复后重新验证与复审 ----
-  let review = await agent(stageReviewPrompt({ stage, stageBaseSha: stageReport.stageBaseSha, verify: stageReport.verify }), {
+  let review = await call('stageReview', stageReviewPrompt({ stage, stageBaseSha: stageReport.stageBaseSha, verify: stageReport.verify }), {
     label: `stage-review:${stage}`,
-    phase: 'StageReview',
     schema: STAGE_REVIEW_SCHEMA,
   })
 
@@ -843,14 +1015,14 @@ for (const stage of stageList) {
       break
     }
 
-    stageReport.verify = await agent(verifyPrompt(`Stage ${stage} 修复后第 ${repair + 1} 轮`), {
+    stageReport.verify = await call('verify', verifyPrompt(`Stage ${stage} 修复后第 ${repair + 1} 轮`), {
       label: `reverify:${stage}#${repair + 1}`,
-      phase: 'Verify',
       schema: VERIFY_SCHEMA,
     })
-    review = await agent(
+    review = await call(
+      'stageReview',
       stageReviewPrompt({ stage, stageBaseSha: stageReport.stageBaseSha, verify: stageReport.verify, previousIssues: review.issues }),
-      { label: `stage-review:${stage}#${repair + 1}`, phase: 'StageReview', schema: STAGE_REVIEW_SCHEMA },
+      { label: `stage-review:${stage}#${repair + 1}`, schema: STAGE_REVIEW_SCHEMA },
     )
   }
   stageReport.stageReview = review
@@ -887,9 +1059,10 @@ for (const stage of stageList) {
         })
         if (!fixed.ok) return `${fixed.taskId ? `${fixed.taskId}：` : ''}${fixed.reason}`
 
-        const recheck = await agent(
+        const recheck = await call(
+          'stageReview',
           stageReviewPrompt({ stage, stageBaseSha: stageReport.stageBaseSha, previousIssues: pending.issues, finalState: true }),
-          { label: `stage-review:final#${fixRound}`, phase: 'StageReview', schema: STAGE_REVIEW_SCHEMA },
+          { label: `stage-review:final#${fixRound}`, schema: STAGE_REVIEW_SCHEMA },
         )
         stageReport.stageReview = recheck
         if (!recheck) return `Stage ${stage} 收尾复审无返回`
@@ -902,9 +1075,8 @@ for (const stage of stageList) {
     // 每次修复与复审通过后都回到循环顶部：重新完整验证，验证通过才做最终审查。
     while (true) {
       attempt++
-      report.finalVerify = await agent(verifyPrompt(`全部 Stage 最终验证第 ${attempt} 次`), {
+      report.finalVerify = await call('verify', verifyPrompt(`全部 Stage 最终验证第 ${attempt} 次`), {
         label: `verify:final#${attempt}`,
-        phase: 'Verify',
         schema: VERIFY_SCHEMA,
       })
       if (!report.finalVerify || !report.finalVerify.passed) {
@@ -919,10 +1091,9 @@ for (const stage of stageList) {
         continue
       }
 
-      const head = await agent(readShaPrompt('HEAD'), { label: `final-head#${attempt}`, phase: 'Verify' })
-      report.finalReview = await agent(finalPrompt({ base: report.implementationBaseSha, head: (head || '').trim() || 'HEAD' }), {
+      const head = await call('readSha', readShaPrompt('HEAD'), { label: `final-head#${attempt}`, phase: 'Verify' })
+      report.finalReview = await call('finalReview', finalPrompt({ base: report.implementationBaseSha, head: (head || '').trim() || 'HEAD' }), {
         label: `final-review#${attempt}`,
-        phase: 'StageReview',
         schema: FINAL_SCHEMA,
       })
       if (!report.finalReview) {
@@ -945,7 +1116,7 @@ for (const stage of stageList) {
 
   // ---- Commit：Stage 执行状态 amend 进本 Stage 最后一个 Task commit ----
   if (CFG.index) {
-    const statusCommit = await agent(stageStatusPrompt(stage), { label: `stage-status:${stage}`, phase: 'Commit', schema: COMMIT_SCHEMA })
+    const statusCommit = await call('stageStatus', stageStatusPrompt(stage), { label: `stage-status:${stage}`, schema: COMMIT_SCHEMA })
     if (!statusCommit || !statusCommit.committed || !statusCommit.cleanAfter) {
       fail({ stage, reason: `Stage ${stage} 状态更新失败：${statusCommit ? statusCommit.error || '工作区不干净' : '无返回'}` })
       break
@@ -956,9 +1127,8 @@ for (const stage of stageList) {
 
   // ---- Merge：按配置 --no-ff 合并回基线分支 ----
   if (mergeEnabled) {
-    const merge = await agent(mergePrompt({ stage, expectedBaseSha }), {
+    const merge = await call('merge', mergePrompt({ stage, expectedBaseSha }), {
       label: `merge:stage-${stage}`,
-      phase: 'Merge',
       schema: MERGE_SCHEMA,
     })
     stageReport.merge = merge
