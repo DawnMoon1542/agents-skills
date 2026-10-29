@@ -141,7 +141,7 @@ git switch -c <y>
 - `meta.phases` 的标题必须与脚本中 `phase` 字段完全一致
 - 仓库约定写进字符串常量（不用 `&&` 串联命令、Python 用 uv、前端用 pnpm、禁止 emoji）
 - 所有子代理都经由 `call(kind, ...)` 发起，phase 与 effort 由 `CALL_PHASE` 和 `CFG.efforts` 决定；每个调用都必须带 `schema`（纯文本步骤除外）
-- Stage 与 Task 严格串行，只用顺序 `await`；唯一的 `parallel` 是 Review phase 内规格与质量两个只读审查，不使用 `pipeline`
+- Stage 与 Task 严格串行，只用顺序 `await`；唯一的 `parallel` 是 ImplReview phase 内规格与质量两个只读审查，不使用 `pipeline`
 
 完整格式约束见 [references/orchestration-spec.md](references/orchestration-spec.md)。
 
@@ -150,7 +150,7 @@ git switch -c <y>
 生成脚本后向用户说明以下内容，让用户能在执行前判断流程是否符合预期：
 
 - 每个 phase 做什么、由谁判断、失败如何处理
-- Stage 与 Task 的串行关系，为什么不能并行（同一工作区，多个实现者会互相覆盖）；Review 内两个审查为什么可以并行（只读，不改工作区）
+- Stage 与 Task 的串行关系，为什么不能并行（同一工作区，多个实现者会互相覆盖）；ImplReview 内两个审查为什么可以并行（只读，不改工作区）
 - 测试编写、测试审查与实现为什么拆成三个代理，`NOT_APPLICABLE` 适用于哪些 Task（这类 Task 跳过测试审查）
 - 审查循环：测试审查打回测试编写者；规格与质量并行审查、合并问题清单统一修复、修复后两者都重审；复审附上一轮问题；minor 只记入 concerns；上限与超限后的停止行为
 - 每类调用的 effort 配置，哪些项继承主 agent
@@ -188,7 +188,7 @@ Stage 已合并到 `x` 后发生中断时不自动 revert；中间 Stage 可能�
 
 | 中断位置 | 工作区状态 | 处理 |
 |---|---|---|
-| Task 提交前（TestDesign 到 Review） | 残留该 Task 未提交的测试或实现，重跑时 preflight 会因不干净而停止 | 列出残留文件、所属 Task、已有的红/绿阶段证据，交用户决定：保留并手动完成提交后重跑，或由用户自行丢弃后重跑 |
+| Task 提交前（TestDesign 到 ImplReview） | 残留该 Task 未提交的测试或实现，重跑时 preflight 会因不干净而停止 | 列出残留文件、所属 Task、已有的红/绿阶段证据，交用户决定：保留并手动完成提交后重跑，或由用户自行丢弃后重跑 |
 | Task 已提交、Stage 未完成 | 干净，进度清单已勾选 | 直接重跑，Scout 只会提取未勾选 Task |
 | 追加修复 Task 后、修复提交前 | 计划文件与修复改动未提交 | 同“Task 提交前”，计划追加内容一并报告 |
 | Stage 状态 amend 或合并阶段 | 视具体步骤 | 先确认 `y`、`x` 的 HEAD 与索引执行状态，再决定从哪个 Stage 重跑 |
@@ -200,18 +200,20 @@ Stage 已合并到 `x` 后发生中断时不自动 revert；中间 Stage 可能�
 流程顺序固定，任何项目都不得增删 phase 或调整顺序：
 
 ```text
-Scout → TestDesign → TestReview → Implement → Review → Commit → StageReview → Verify → Merge
+Scout → TestDesign → TestReview → TestFix → Implement → ImplReview → ImplFix → Commit → StageRev → Verify → Merge
 ```
 
 | Phase | 负责 | 不负责 |
 |---|---|---|
 | Scout | 基线检查、Stage 基线 SHA、提取未完成 Task 全文 | 修改文件 |
-| TestDesign | 只写会失败的目标测试，确认红阶段原因正确；按测试审查意见修复测试 | 修改生产代码 |
+| TestDesign | 只写会失败的目标测试，确认红阶段原因正确 | 修改生产代码 |
 | TestReview | 实现前审查测试是否必要、充分、符合 Task 与设计、红阶段有效 | 修改文件 |
-| Implement | 在已有失败测试上实现功能使其转绿，修复审查问题 | 删改测试迎合实现、提交、切换分支 |
-| Review | 规格审查（缺失、多余、兼容层、数据风险）与质量审查（正确性、清晰度、测试质量）并行，两者都通过才提交；minor 不阻塞 | 修改文件 |
+| TestFix | 按测试审查意见修复测试，保持红阶段有效 | 修改生产代码 |
+| Implement | 在已有失败测试上实现功能使其转绿 | 删改测试迎合实现、提交、切换分支 |
+| ImplReview | 规格审查（缺失、多余、兼容层、数据风险）与质量审查（正确性、清晰度、测试质量）并行，两者都通过才提交；minor 不阻塞 | 修改文件 |
+| ImplFix | 按规格与质量审查意见修复实现，修复后两个审查都重新执行 | 删改测试迎合实现、提交、切换分支 |
 | Commit | 勾选进度、限定范围 `git add`、提交；Stage 执行状态 amend | 修改实现 |
-| StageReview | Stage 整体覆盖、Task 间集成、最终状态方向、Stage 验证失败归因；最终审查 | 修改文件 |
+| StageRev | Stage 整体覆盖、Task 间集成、最终状态方向、Stage 验证失败归因；最终审查 | 修改文件 |
 | Verify | 运行计划中的真实验证命令 | 修复、猜测原因 |
 | Merge | `--no-ff` 合并、冲突回滚 | 选择冲突内容 |
 

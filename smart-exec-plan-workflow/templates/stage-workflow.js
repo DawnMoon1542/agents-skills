@@ -6,10 +6,12 @@ export const meta = {
     { title: 'Scout', detail: '基线检查，记录 Stage 基线并提取未完成 Task 全文' },
     { title: 'TestDesign', detail: '先只写会失败的目标测试，确认红阶段原因正确' },
     { title: 'TestReview', detail: '审查测试是否必要、充分、符合 Task 要求' },
+    { title: 'TestFix', detail: '按测试审查意见修复测试，保持红阶段有效' },
     { title: 'Implement', detail: '在已有失败测试上实现功能使其转绿，不执行 Git 写操作' },
-    { title: 'Review', detail: '规格审查与质量审查并行，两者都通过才提交' },
+    { title: 'ImplReview', detail: '规格审查与质量审查并行，两者都通过才提交' },
+    { title: 'ImplFix', detail: '按规格与质量审查意见修复实现，不执行 Git 写操作' },
     { title: 'Commit', detail: '更新计划进度并提交当前 Task，Stage 状态 amend' },
-    { title: 'StageReview', detail: 'Stage 整体审查与最终审查，必要时追加修复 Task' },
+    { title: 'StageRev', detail: 'Stage 整体审查与最终审查，必要时追加修复 Task' },
     { title: 'Verify', detail: 'Stage 记录性验证与最终全量验证' },
     { title: 'Merge', detail: '按配置 --no-ff 合并回基线分支' },
   ],
@@ -52,10 +54,12 @@ const CFG = {
       Scout: 'low',
       TestDesign: 'high',
       TestReview: 'high',
+      TestFix: 'high',
       Implement: 'high',
-      Review: 'high',
+      ImplReview: 'high',
+      ImplFix: 'high',
       Commit: 'low',
-      StageReview: 'xhigh',
+      StageRev: 'xhigh',
       Verify: 'low',
       Merge: 'low',
     },
@@ -72,17 +76,17 @@ const CALL_PHASE = {
   readSha: 'Scout',
   scout: 'Scout',
   test: 'TestDesign',
-  testFix: 'TestDesign',
   testReview: 'TestReview',
+  testFix: 'TestFix',
   impl: 'Implement',
-  reviewFix: 'Implement',
-  spec: 'Review',
-  quality: 'Review',
+  spec: 'ImplReview',
+  quality: 'ImplReview',
+  reviewFix: 'ImplFix',
   commit: 'Commit',
   stageStatus: 'Commit',
-  stageReview: 'StageReview',
-  finalReview: 'StageReview',
-  append: 'StageReview',
+  stageReview: 'StageRev',
+  finalReview: 'StageRev',
+  append: 'StageRev',
   verify: 'Verify',
   merge: 'Merge',
 }
@@ -97,6 +101,11 @@ const call = (kind, prompt, opts = {}) => {
   if (effort) options.effort = effort
   return agent(prompt, options)
 }
+
+// agent label 统一为 `{前缀}: S{stage} T{group}-{task} #{n}`：前缀标明调用类型，#n 表示第 n 次修复、复审或重试，
+// 首次执行不带 #。不针对单个 Task 的调用只保留 S{stage}，全局收尾步骤用 final 代替。
+const taskTag = (stage, task) => `S${stage} T${String(task.id).replace(/^Task\s*/, '')}`
+const nth = (base, n) => (n ? `${base} #${n}` : base)
 
 const planPath = (stage) => CFG.plans[stage]
 const designPath = (stage) => CFG.designs[stage] || null
@@ -729,15 +738,15 @@ async function runReviewLoop(task, stage, baseSha, initialImpl, testReport) {
   let impl = initialImpl
   let previousIssues = null
   for (let round = 0; round < CFG.limits.reviewRounds; round++) {
-    const suffix = round ? `#${round}` : ''
+    const tag = nth(taskTag(stage, task), round)
     const previous = previousIssuesBlock(previousIssues)
     const [spec, quality] = await parallel([
       () => call('spec', specPrompt({ stage, task, baseSha, impl }) + previous, {
-        label: `spec:${task.id}${suffix}`,
+        label: `Spec: ${tag}`,
         schema: SPEC_SCHEMA,
       }),
       () => call('quality', qualityPrompt({ stage, task, baseSha, impl, testReport }) + previous, {
-        label: `quality:${task.id}${suffix}`,
+        label: `Quality: ${tag}`,
         schema: QUALITY_SCHEMA,
       }),
     ])
@@ -758,7 +767,7 @@ async function runReviewLoop(task, stage, baseSha, initialImpl, testReport) {
     if (round === CFG.limits.reviewRounds - 1) break
 
     const fixed = await call('reviewFix', fixPrompt({ task, reviewKind: '规格与代码质量', issues, testReport }), {
-      label: `review-fix:${task.id}#${round + 1}`,
+      label: nth(`ImplFix: ${taskTag(stage, task)}`, round + 1),
       schema: IMPL_SCHEMA,
     })
     if (!fixed) return { ok: false, reason: '审查问题修复无返回' }
@@ -776,7 +785,7 @@ async function runTestReviewLoop(stage, task, initialTests) {
   let previousIssues = null
   for (let round = 0; round < CFG.limits.reviewRounds; round++) {
     const review = await call('testReview', testReviewPrompt({ stage, task, testReport: tests }) + previousIssuesBlock(previousIssues), {
-      label: `test-review:${task.id}${round ? `#${round}` : ''}`,
+      label: nth(`TestRev: ${taskTag(stage, task)}`, round),
       schema: TEST_REVIEW_SCHEMA,
     })
     if (!review) return { ok: false, reason: '测试审查无返回' }
@@ -794,7 +803,7 @@ async function runTestReviewLoop(stage, task, initialTests) {
     if (round === CFG.limits.reviewRounds - 1) break
 
     const fixed = await call('testFix', testFixPrompt({ stage, task, issues }), {
-      label: `test-fix:${task.id}#${round + 1}`,
+      label: nth(`TestFix: ${taskTag(stage, task)}`, round + 1),
       schema: TEST_SCHEMA,
     })
     if (!fixed) return { ok: false, reason: '测试修复无返回' }
@@ -811,7 +820,7 @@ async function runTestReviewLoop(stage, task, initialTests) {
 async function withContextRetry(run, label, kind, schema, stage) {
   let result = await call(kind, run(''), { label, schema })
   for (let retry = 0; result && isBlockedStatus(result) && retry < CFG.limits.implRetries; retry++) {
-    result = await call(kind, run(extraContextFor(stage, result)), { label: `${label}-retry#${retry + 1}`, schema })
+    result = await call(kind, run(extraContextFor(stage, result)), { label: nth(label, retry + 1), schema })
   }
   return result
 }
@@ -820,7 +829,7 @@ async function implementOneTask(stage, task, allowPlanAppend) {
   // 第一步：只写失败测试。测试编写者不得改生产代码，因此红阶段是工作区里的客观事实。
   let tests = await withContextRetry(
     (extraContext) => testPrompt({ stage, task, extraContext }),
-    `test:${task.id}`,
+    `Test: ${taskTag(stage, task)}`,
     'test',
     TEST_SCHEMA,
     stage,
@@ -844,7 +853,7 @@ async function implementOneTask(stage, task, allowPlanAppend) {
   // 第二步：让已存在的失败测试转绿。实现者不得删改测试来迎合自己。
   const impl = await withContextRetry(
     (extraContext) => implPrompt({ stage, task, testReport: tests, extraContext }),
-    `impl:${task.id}`,
+    `Impl: ${taskTag(stage, task)}`,
     'impl',
     IMPL_SCHEMA,
     stage,
@@ -860,7 +869,7 @@ async function implementOneTask(stage, task, allowPlanAppend) {
   if (!review.ok) return { ok: false, reason: review.reason }
 
   const commit = await call('commit', commitPrompt({ stage, task, allowPlanAppend }), {
-    label: `commit:${task.id}`,
+    label: `Commit: ${taskTag(stage, task)}`,
     schema: COMMIT_SCHEMA,
   })
   if (!commit || !commit.committed) return { ok: false, reason: `提交失败：${commit ? commit.error : '无返回'}` }
@@ -899,12 +908,13 @@ async function runStageTasks({ stage, stageReport, allowDirtyPlan, label }) {
 }
 
 // 追加修复 Task 并走完标准 Task 循环（测试、测试审查、实现、并行审查、提交）。
-async function repairWith({ stage, stageReport, issues, fixTasks, source, label }) {
+// scope 区分 Stage 修复（S2）与收尾修复（S2 final），round 为修复轮次，用于 label。
+async function repairWith({ stage, stageReport, issues, fixTasks, source, scope, round }) {
   const appended = await call('append', stageAppendPrompt({ stage, review: { issues, fixTasks }, source }), {
-    label: `append-${label}`,
+    label: nth(`StageRev: ${scope} append`, round),
   })
   if (!appended) return { ok: false, reason: '追加修复 Task 失败' }
-  return runStageTasks({ stage, stageReport, allowDirtyPlan: true, label: `scout-${label}` })
+  return runStageTasks({ stage, stageReport, allowDirtyPlan: true, label: nth(`Scout: ${scope}`, round) })
 }
 
 const stageList = (args && Array.isArray(args.stages) && args.stages.length ? args.stages : CFG.stages)
@@ -935,7 +945,7 @@ if (mergeEnabled && CFG.devBranch === CFG.baseBranch) {
 }
 
 // ---- Scout：基线检查，任何不满足都直接停止，不带着脏工作区开始 ----
-const preflight = await call('preflight', preflightPrompt(), { label: 'preflight', schema: PREFLIGHT_SCHEMA })
+const preflight = await call('preflight', preflightPrompt(), { label: 'Scout: preflight', schema: PREFLIGHT_SCHEMA })
 if (!preflight) {
   fail({ stage: 'preflight', reason: '基线检查无返回' })
   return report
@@ -953,7 +963,7 @@ log(`IMPLEMENTATION_BASE_SHA=${preflight.headSha}`)
 
 let expectedBaseSha = ''
 if (mergeEnabled) {
-  const baseHead = await call('readSha', readShaPrompt(CFG.baseBranch), { label: 'base-head:init' })
+  const baseHead = await call('readSha', readShaPrompt(CFG.baseBranch), { label: 'Scout: base HEAD' })
   expectedBaseSha = baseHead ? baseHead.trim() : ''
   if (!expectedBaseSha) {
     fail({ stage: 'preflight', reason: `无法读取基线分支 ${CFG.baseBranch} 的 HEAD` })
@@ -976,14 +986,14 @@ for (const stage of stageList) {
   // 先登记再执行，任何 break 路径都不需要再补 push，报告里每个 Stage 只出现一次。
   report.stages.push(stageReport)
 
-  const headNow = await call('readSha', readShaPrompt('HEAD'), { label: `base:stage-${stage}` })
+  const headNow = await call('readSha', readShaPrompt('HEAD'), { label: `Scout: S${stage} HEAD` })
   stageReport.stageBaseSha = headNow ? headNow.trim() : ''
   if (!stageReport.stageBaseSha) {
     fail({ stage, reason: '无法读取 Stage 基线 SHA' })
     break
   }
 
-  const tasks = await runStageTasks({ stage, stageReport, allowDirtyPlan: false, label: `scout:stage-${stage}` })
+  const tasks = await runStageTasks({ stage, stageReport, allowDirtyPlan: false, label: `Scout: S${stage}` })
   if (!tasks.ok) {
     fail({ stage, task: tasks.taskId, reason: tasks.reason })
     break
@@ -991,12 +1001,12 @@ for (const stage of stageList) {
   stageReport.title = tasks.stageTitle || `Stage ${stage}`
 
   // ---- Verify：Stage 验证只做记录，交给 Stage 审查归因 ----
-  stageReport.verify = await call('verify', verifyPrompt(`Stage ${stage}`), { label: `verify:stage-${stage}`, schema: VERIFY_SCHEMA })
+  stageReport.verify = await call('verify', verifyPrompt(`Stage ${stage}`), { label: `Verify: S${stage}`, schema: VERIFY_SCHEMA })
   if (stageReport.verify && !stageReport.verify.passed) log(`Stage ${stage} 全量验证未通过，交 Stage 审查归因`)
 
-  // ---- StageReview：审查驱动修复，修复后重新验证与复审 ----
+  // ---- StageRev：审查驱动修复，修复后重新验证与复审 ----
   let review = await call('stageReview', stageReviewPrompt({ stage, stageBaseSha: stageReport.stageBaseSha, verify: stageReport.verify }), {
-    label: `stage-review:${stage}`,
+    label: `StageRev: S${stage}`,
     schema: STAGE_REVIEW_SCHEMA,
   })
 
@@ -1008,7 +1018,8 @@ for (const stage of stageList) {
       stageReport,
       issues: review.issues,
       fixTasks: review.fixTasks,
-      label: `fix:${stage}#${repair + 1}`,
+      scope: `S${stage}`,
+      round: repair + 1,
     })
     if (!fixed.ok) {
       fail({ stage, task: fixed.taskId, reason: fixed.reason })
@@ -1016,13 +1027,13 @@ for (const stage of stageList) {
     }
 
     stageReport.verify = await call('verify', verifyPrompt(`Stage ${stage} 修复后第 ${repair + 1} 轮`), {
-      label: `reverify:${stage}#${repair + 1}`,
+      label: nth(`Verify: S${stage}`, repair + 1),
       schema: VERIFY_SCHEMA,
     })
     review = await call(
       'stageReview',
       stageReviewPrompt({ stage, stageBaseSha: stageReport.stageBaseSha, verify: stageReport.verify, previousIssues: review.issues }),
-      { label: `stage-review:${stage}#${repair + 1}`, schema: STAGE_REVIEW_SCHEMA },
+      { label: nth(`StageRev: S${stage}`, repair + 1), schema: STAGE_REVIEW_SCHEMA },
     )
   }
   stageReport.stageReview = review
@@ -1055,14 +1066,15 @@ for (const stage of stageList) {
           issues: pending.issues,
           fixTasks: pending.fixTasks,
           source: pending.source,
-          label: `final-fix#${fixRound}`,
+          scope: `S${stage} final`,
+          round: fixRound,
         })
         if (!fixed.ok) return `${fixed.taskId ? `${fixed.taskId}：` : ''}${fixed.reason}`
 
         const recheck = await call(
           'stageReview',
           stageReviewPrompt({ stage, stageBaseSha: stageReport.stageBaseSha, previousIssues: pending.issues, finalState: true }),
-          { label: `stage-review:final#${fixRound}`, schema: STAGE_REVIEW_SCHEMA },
+          { label: nth(`StageRev: S${stage} final`, fixRound), schema: STAGE_REVIEW_SCHEMA },
         )
         stageReport.stageReview = recheck
         if (!recheck) return `Stage ${stage} 收尾复审无返回`
@@ -1076,7 +1088,7 @@ for (const stage of stageList) {
     while (true) {
       attempt++
       report.finalVerify = await call('verify', verifyPrompt(`全部 Stage 最终验证第 ${attempt} 次`), {
-        label: `verify:final#${attempt}`,
+        label: nth('Verify: final', attempt - 1),
         schema: VERIFY_SCHEMA,
       })
       if (!report.finalVerify || !report.finalVerify.passed) {
@@ -1091,9 +1103,9 @@ for (const stage of stageList) {
         continue
       }
 
-      const head = await call('readSha', readShaPrompt('HEAD'), { label: `final-head#${attempt}`, phase: 'Verify' })
+      const head = await call('readSha', readShaPrompt('HEAD'), { label: nth('Verify: final HEAD', attempt - 1), phase: 'Verify' })
       report.finalReview = await call('finalReview', finalPrompt({ base: report.implementationBaseSha, head: (head || '').trim() || 'HEAD' }), {
-        label: `final-review#${attempt}`,
+        label: nth('StageRev: final', attempt - 1),
         schema: FINAL_SCHEMA,
       })
       if (!report.finalReview) {
@@ -1116,7 +1128,7 @@ for (const stage of stageList) {
 
   // ---- Commit：Stage 执行状态 amend 进本 Stage 最后一个 Task commit ----
   if (CFG.index) {
-    const statusCommit = await call('stageStatus', stageStatusPrompt(stage), { label: `stage-status:${stage}`, schema: COMMIT_SCHEMA })
+    const statusCommit = await call('stageStatus', stageStatusPrompt(stage), { label: `Commit: S${stage}`, schema: COMMIT_SCHEMA })
     if (!statusCommit || !statusCommit.committed || !statusCommit.cleanAfter) {
       fail({ stage, reason: `Stage ${stage} 状态更新失败：${statusCommit ? statusCommit.error || '工作区不干净' : '无返回'}` })
       break
@@ -1128,7 +1140,7 @@ for (const stage of stageList) {
   // ---- Merge：按配置 --no-ff 合并回基线分支 ----
   if (mergeEnabled) {
     const merge = await call('merge', mergePrompt({ stage, expectedBaseSha }), {
-      label: `merge:stage-${stage}`,
+      label: `Merge: S${stage}`,
       schema: MERGE_SCHEMA,
     })
     stageReport.merge = merge

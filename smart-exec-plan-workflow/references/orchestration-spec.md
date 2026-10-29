@@ -20,10 +20,12 @@ export const meta = {
     { title: 'Scout', detail: '...' },
     { title: 'TestDesign', detail: '...' },
     { title: 'TestReview', detail: '...' },
+    { title: 'TestFix', detail: '...' },
     { title: 'Implement', detail: '...' },
-    { title: 'Review', detail: '...' },
+    { title: 'ImplReview', detail: '...' },
+    { title: 'ImplFix', detail: '...' },
     { title: 'Commit', detail: '...' },
-    { title: 'StageReview', detail: '...' },
+    { title: 'StageRev', detail: '...' },
     { title: 'Verify', detail: '...' },
     { title: 'Merge', detail: '...' },
   ],
@@ -33,8 +35,8 @@ export const meta = {
 硬性要求：
 
 - `meta` 是纯字面量：不能出现变量、函数调用、对象展开、模板字符串插值
-- `phases` 九项固定，标题与 `phase` 字段完全一致，不增不减
-- `Phase` 名称按此顺序出现，最终审查复用 `StageReview` phase，不新增 `FinalReview`
+- `phases` 十一项固定，标题与 `phase` 字段完全一致，不增不减
+- `Phase` 名称按此顺序出现，最终审查复用 `StageRev` phase，不新增 `FinalReview`
 
 ## 3. Phase 契约
 
@@ -43,19 +45,21 @@ export const meta = {
 | 1 | Scout | 分支、HEAD、工作区状态；计划进度清单 | `PREFLIGHT_SCHEMA`、`TASK_LIST_SCHEMA` | 否 |
 | 2 | TestDesign | Task 全文、设计、术语表、允许文件 | `TEST_SCHEMA` | 否 |
 | 3 | TestReview | Task 全文、设计、测试文件、红阶段记录、baseSha | `TEST_REVIEW_SCHEMA` | 否 |
-| 4 | Implement | Task 全文、测试报告（红阶段与测试文件） | `IMPL_SCHEMA` | 否 |
-| 5 | Review | Task 全文、BASE_SHA、实现者报告、红/绿阶段结果 | `SPEC_SCHEMA`、`QUALITY_SCHEMA` | 否 |
-| 6 | Commit | Task 提交信息、审查结论；需求索引执行状态 | `COMMIT_SCHEMA` | 是：`git add`、`git commit`、`git commit --amend` |
-| 7 | StageReview | STAGE_BASE_SHA..HEAD、设计、计划、Stage 验证结果 | `STAGE_REVIEW_SCHEMA`、`FINAL_SCHEMA` | 否 |
-| 8 | Verify | 计划中的真实验证命令 | `VERIFY_SCHEMA` | 否 |
-| 9 | Merge | 基线分支期望 HEAD、开发分支 | `MERGE_SCHEMA` | 是：`git switch`、`git merge` |
+| 4 | TestFix | Task 全文、测试审查问题清单 | `TEST_SCHEMA` | 否 |
+| 5 | Implement | Task 全文、测试报告（红阶段与测试文件） | `IMPL_SCHEMA` | 否 |
+| 6 | ImplReview | Task 全文、BASE_SHA、实现者报告、红/绿阶段结果 | `SPEC_SCHEMA`、`QUALITY_SCHEMA` | 否 |
+| 7 | ImplFix | Task 全文、规格与质量审查问题清单、测试报告 | `IMPL_SCHEMA` | 否 |
+| 8 | Commit | Task 提交信息、审查结论；需求索引执行状态 | `COMMIT_SCHEMA` | 是：`git add`、`git commit`、`git commit --amend` |
+| 9 | StageRev | STAGE_BASE_SHA..HEAD、设计、计划、Stage 验证结果 | `STAGE_REVIEW_SCHEMA`、`FINAL_SCHEMA` | 否 |
+| 10 | Verify | 计划中的真实验证命令 | `VERIFY_SCHEMA` | 否 |
+| 11 | Merge | 基线分支期望 HEAD、开发分支 | `MERGE_SCHEMA` | 是：`git switch`、`git merge` |
 
 `mergeEnabled=false` 时跳过 Merge phase，`devBranch` 与 `baseBranch` 同名时必须设为 `false`，否则脚本在基线检查前停止。Stage 状态 amend 在 Commit phase 执行，与是否合并无关。
 
 TestDesign、TestReview 与 Implement 由三个独立代理完成：
 
 - 测试编写者只写会失败的目标测试，运行后在 `redPhase` 记录失败原因，确认是功能缺失而不是语法或导入错误；不得修改生产代码
-- 测试审查者在实现之前检查测试的必要性、充分性、与 Task 和设计的一致性、红阶段有效性；未通过时把问题打回测试编写者修复（`test-fix` 归属 TestDesign phase），复审通过才进入 Implement
+- 测试审查者在实现之前检查测试的必要性、充分性、与 Task 和设计的一致性、红阶段有效性；未通过时把问题打回测试编写者修复（测试修复归属 TestFix phase），复审通过才进入 Implement
 - 没有测试 Step 的 Task（纯文档、静态资源、无行为配置）返回 `NOT_APPLICABLE` 并在 `redPhase` 写明理由，跳过 TestReview，实现者照常执行
 - 实现者拿到测试文件清单与红阶段输出，只改生产代码使其转绿，在 `greenPhase` 记录真实输出；不得删改、跳过或放宽测试
 - 两者都返回 BLOCKED / NEEDS_CONTEXT 时各自最多补充 `implRetries` 次上下文，每次交给新代理
@@ -73,7 +77,7 @@ Stage 严格串行，Task 严格串行。原因不是流程偏好，而是所有
 因此脚本中：
 
 - 禁止对实现、修复、提交、Stage 审查相关步骤使用 `parallel()`，全程不使用 `pipeline()`
-- 唯一允许的 `parallel()` 是 Review phase 内同一轮的规格审查与质量审查：两者只读，审查同一份工作区快照，不会互相干扰
+- 唯一允许的 `parallel()` 是 ImplReview phase 内同一轮的规格审查与质量审查：两者只读，审查同一份工作区快照，不会互相干扰
 - TestReview 只有一个审查者，串行执行
 - 不使用 `isolation: 'worktree'`：本流程依赖单一工作区与线性历史
 
@@ -82,8 +86,8 @@ Stage 严格串行，Task 严格串行。原因不是流程偏好，而是所有
 Task 内两个审查循环，顺序固定：
 
 ```text
-TestDesign → TestReview ─ 通过 → Implement → Review（spec ∥ quality）─ 通过 → Commit
-                 └─ 未通过 → test-fix → 复审              └─ 未通过 → review-fix → 并行复审
+TestDesign → TestReview ─ 通过 → Implement → ImplReview（spec ∥ quality）─ 通过 → Commit
+                 └─ 未通过 → TestFix → 复审                  └─ 未通过 → ImplFix → 并行复审
 ```
 
 两个循环共用的规则：
@@ -208,17 +212,41 @@ Stage 状态更新：
 |---|---|---|
 | Scout | `preflight`、`readSha` | low |
 | Scout | `scout` | medium（calls 覆盖） |
-| TestDesign | `test`、`testFix` | high |
+| TestDesign | `test` | high |
 | TestReview | `testReview` | high |
-| Implement | `impl`、`reviewFix` | high |
-| Review | `spec`、`quality` | high |
+| TestFix | `testFix` | high |
+| Implement | `impl` | high |
+| ImplReview | `spec`、`quality` | high |
+| ImplFix | `reviewFix` | high |
 | Commit | `commit`、`stageStatus` | low |
-| StageReview | `stageReview`、`finalReview` | xhigh |
-| StageReview | `append` | medium（calls 覆盖） |
+| StageRev | `stageReview`、`finalReview` | xhigh |
+| StageRev | `append` | medium（calls 覆盖） |
 | Verify | `verify` | low |
 | Merge | `merge` | low |
 
 `readSha` 在收尾时以 Verify phase 展示，effort 仍按其调用类型取值。
+
+### agent label
+
+label 统一为 `{前缀}: S{stage} T{group}-{task} #{n}`，由 `taskTag` 与 `nth` 生成：
+
+- `T{group}-{task}` 取 Task id 去掉 `Task ` 前缀，修复 Task 为 `T{stage}-修复N`
+- `#n` 表示第 n 次修复、复审或阻塞重试，首次执行不带 `#`
+- 不针对单个 Task 的调用只保留 `S{stage}`；收尾修复用 `S{stage} final`，最终验证与最终审查用 `final`
+
+| Phase | 前缀 | 示例 |
+|---|---|---|
+| Scout | `Scout` | `Scout: preflight`、`Scout: S2`、`Scout: S2 #1`（追加修复后重扫） |
+| TestDesign | `Test` | `Test: S2 T3-2`、`Test: S2 T3-2 #1`（阻塞重试） |
+| TestReview | `TestRev` | `TestRev: S2 T3-2`、`TestRev: S2 T3-2 #1`（复审） |
+| TestFix | `TestFix` | `TestFix: S2 T3-2 #1` |
+| Implement | `Impl` | `Impl: S2 T3-2` |
+| ImplReview | `Spec`、`Quality` | `Spec: S2 T3-2`、`Quality: S2 T3-2 #1` |
+| ImplFix | `ImplFix` | `ImplFix: S2 T3-2 #1` |
+| Commit | `Commit` | `Commit: S2 T3-2`、`Commit: S2`（Stage 状态 amend） |
+| StageRev | `StageRev` | `StageRev: S2`、`StageRev: S2 #1`、`StageRev: S2 append #1`、`StageRev: final` |
+| Verify | `Verify` | `Verify: S2`、`Verify: S2 #1`、`Verify: final #1` |
+| Merge | `Merge` | `Merge: S2` |
 
 ## 10. 恢复与重跑
 
@@ -227,7 +255,7 @@ Stage 状态更新：
 - 计划进度清单是唯一可信的完成标记，历史报告不构成完成证据
 - 改动脚本后不得沿用旧 runId 声称原结果
 
-中断发生在 Task 提交之前（TestDesign 到 Review 之间）时，工作区会残留该 Task 未提交的测试或实现，重跑时 preflight 会因工作区不干净而停止。处理步骤：
+中断发生在 Task 提交之前（TestDesign 到 ImplReview 之间）时，工作区会残留该 Task 未提交的测试或实现，重跑时 preflight 会因工作区不干净而停止。处理步骤：
 
 1. 用 `git status --short` 与 `git diff` 列出残留改动，对照 `blocked.task` 与计划确认属于哪个 Task
 2. 把残留文件、所属 Task、是否已有红阶段或绿阶段证据报告给用户
@@ -238,11 +266,11 @@ Stage 状态更新：
 
 生成脚本后逐项确认：
 
-1. `meta` 是纯字面量，phases 九项且顺序正确
+1. `meta` 是纯字面量，phases 十一项且顺序正确
 2. `CFG` 中的路径、分支、验证命令都来自实际文件，没有占位符残留
 3. `CALL_PHASE` 中的 phase 值都在 `meta.phases` 中存在，除 `call` 内部外没有直接调用 `agent()`
-4. `parallel` 只出现在 Review phase 的规格与质量审查，没有 `pipeline` / `isolation`
-5. 每个审查循环都有轮次上限与超限返回值；TestReview 通过才进入 Implement，Review 循环两个审查都通过才返回成功，minor 不触发修复
+4. `parallel` 只出现在 ImplReview phase 的规格与质量审查，没有 `pipeline` / `isolation`
+5. 每个审查循环都有轮次上限与超限返回值；TestReview 通过才进入 Implement，ImplReview 循环两个审查都通过才返回成功，minor 不触发修复
 6. 每条停止路径都写入 `blocked` 并 `break`
 7. Git 写操作只出现在 `Commit` 与 `Merge` phase 的提示中
 8. 测试编写者、测试审查者、实现者与审查者的提示包含禁止 Git 写操作的约束；测试编写者与测试修复者禁止改生产代码，实现者禁止删改测试
