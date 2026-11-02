@@ -4,9 +4,9 @@ export const meta = {
   whenToUse: '<WHEN_TO_USE>',
   phases: [
     { title: 'Scout', detail: '基线检查，记录 Stage 基线并提取未完成 Task 全文' },
-    { title: 'TestDesign', detail: '先只写会失败的目标测试，确认红阶段原因正确' },
-    { title: 'TestReview', detail: '审查测试是否必要、充分、符合 Task 要求' },
-    { title: 'TestFix', detail: '按测试审查意见修复测试，保持红阶段有效' },
+    { title: 'TestDesign', detail: '按测试取舍只写会失败的目标测试，或声明本 Task 无需新增测试' },
+    { title: 'TestReview', detail: '审查测试是否值得写、充分、符合 Task 要求，复核不适用声明' },
+    { title: 'TestFix', detail: '按测试审查意见补写、修改或删除测试，保持红阶段有效' },
     { title: 'Implement', detail: '在已有失败测试上实现功能使其转绿，不执行 Git 写操作' },
     { title: 'ImplReview', detail: '规格审查与质量审查并行，两者都通过才提交' },
     { title: 'ImplFix', detail: '按规格与质量审查意见修复实现，不执行 Git 写操作' },
@@ -120,6 +120,16 @@ const GIT_BAN =
 
 const GIT_RULES = '仓库约定：bash 命令不要用 && 串联多条命令；Python 用 uv；前端包管理用 pnpm；禁止 emoji；不写计划外的总结文档。'
 
+// 测试编写、测试审查与测试修复共用同一份取舍口径，内容须与 test-driven-development 技能的“测试取舍”一致。
+const TEST_POLICY = `## 测试取舍
+
+- 必须有测试：数据迁移与持久化、安全与权限边界、并发与故障恢复、跨组件契约、有分支的业务规则、已发生缺陷的回归。
+- 不写测试：文档、规则、提示词的文本；读取源码断言标识符、导入或调用；依赖、配置项、脚本条目是否存在；接口、文件、字段“已删除”；框架或第三方库自身行为；无逻辑透传、纯数据结构、常量；mock 调用次数、内部调用顺序等实现细节；样式与界面文案；与已有测试同一等价类的重复用例。
+- 数量：一个目标行为一个测试；边界和异常只在进入不同分支或产生不同结果时各写一个，不为凑齐正常、边界、异常三类补写同类用例。
+- 位置：在稳定公共边界测试；已有测试覆盖目标行为时修改已有测试，不新建平行测试；只在后续 Task 之前成立的中间状态不写测试。
+- 改变与删除：修改已有行为时先改已有测试的断言；删除行为时删除只验证该行为的旧测试，不写“已删除”测试。
+- 命名：测试名与测试文件名描述业务行为，不含 Stage、Task、Phase 或计划编号。`
+
 // Stage 验证只做记录：失败是否阻塞由 Stage 审查归因（后续 Stage 未实现导致的失败不算本 Stage 问题）。
 // 只有最终验证必须全绿，失败时先追加修复 Task 再重跑。
 const verifyText = (verify) => {
@@ -187,7 +197,8 @@ const IMPL_SCHEMA = {
 
 // 测试编写阶段只产出失败测试，因此没有 greenPhase；changedFiles 换成 testFiles，
 // 便于实现阶段与审查阶段区分“谁写的测试”。
-// NOT_APPLICABLE 只用于计划中该 Task 明确没有测试 Step 的纯文档、静态资源或无行为配置，避免编写虚假测试。
+// NOT_APPLICABLE 用于不包含必须测试行为的 Task（纯文档、配置、样式、无逻辑代码、删除行为、纯测试整理），
+// redPhase 改为写取舍类别与替代验证；该声明同样要经过测试审查，避免把必须测试的行为当成无需测试。
 const TEST_SCHEMA = {
   type: 'object',
   properties: {
@@ -355,7 +366,7 @@ ${contextLine}
 
 
 
-const testReviewPrompt = ({ stage, task, testReport }) => `你在审查 ${task.id}：${task.title} 的测试（测试已写完，进入实现之前的审查）。仓库 ${CFG.repo}。
+const testReviewPrompt = ({ stage, task, testReport }) => `你在审查 ${task.id}：${task.title} 的测试阶段产出（进入实现之前的审查）。仓库 ${CFG.repo}。
 
 ## 输入
 
@@ -363,23 +374,28 @@ const testReviewPrompt = ({ stage, task, testReport }) => `你在审查 ${task.i
 - Task 完整说明：\n${task.body}
 ${designLine(stage)}
 ${contextLine}
-- 测试编写者报告：summary=${testReport.summary}；testFiles=${testReport.testFiles.join('、')}
-- 红阶段记录：${testReport.redPhase}
+- 测试编写者报告：status=${testReport.status}；summary=${testReport.summary}；testFiles=${testFilesText(testReport)}
+- ${testReport.status === 'NOT_APPLICABLE' ? '不适用理由' : '红阶段记录'}：${testReport.redPhase}
 - BASE_SHA：${testReport.baseSha}
 
 ## 审查范围
 
-读取测试文件内容与 git diff ${testReport.baseSha}，不要信任测试编写者的自述。
+读取 git status --short、git diff ${testReport.baseSha} 与相关测试文件内容，不要信任测试编写者的自述。
+
+${TEST_POLICY}
 
 ## 检查
 
-1. 必要性：测试覆盖的行为是否为 Task 要求的目标行为，是否测试了 Task 明确不需要的功能。
-2. 充分性：Task 列出的正常路径、边界条件、异常路径是否都有断言，是否遗漏 Task 要求的场景。
+${testReport.status === 'NOT_APPLICABLE' ? `测试编写者声明本 Task 不需要新增测试。
+1. 不适用理由：Task 是否确实不包含必须有测试的行为，声明的取舍类别和替代验证是否成立。
+2. 遗漏：Task 包含必须有测试的行为却没有测试时，把需要补写的测试场景写入 sufficient。
+3. 旧测试：本 Task 改变或删除的行为对应的旧测试是否已更新或删除；被删除或合并的测试是否只涉及失效行为，没有删掉仍有效的保护。` : `1. 必要性：每个测试是否对应 Task 要求的目标行为且属于必须有测试的类别；是否存在“不写测试”类别的测试、与已有测试同一等价类的重复用例，或测试名含 Stage、Task、计划编号。
+2. 充分性：Task 中必须有测试的行为是否都有断言，进入不同分支或产生不同结果的边界与异常是否覆盖，本 Task 改变或删除的行为对应的旧测试是否已更新或删除。测试编写者按测试取舍跳过的计划场景，确认跳过理由成立即可，不要求补写。
 3. 一致性：测试调用的接口、字段、命名是否与 Task 描述或设计一致，是否与术语表冲突。
 4. 红阶段有效性：失败原因是否为“功能未实现”（导入失败、属性不存在、返回值不符、断言不成立），而不是测试自身的语法错误、拼写错误或环境问题。
-5. 断言质量：是否断言真实行为而不是只断言 mock 被调用，期望值是否来自 Task 或设计而不是猜测。
+5. 断言质量：是否断言真实行为而不是只断言 mock 被调用，期望值是否来自 Task 或设计而不是猜测。`}
 
-问题分别写入 necessary（多余或不必要的测试）、sufficient（遗漏的场景）、alignment（与 Task、设计、术语表不一致）、redValidity（红阶段无效或断言质量问题）。只报告会让实现跑偏或让验收失真的问题，不报告纯风格意见；四项都为空时 verdict 为 APPROVED。
+问题分别写入 necessary（不值得保留的测试、应删除而未删除的旧测试）、sufficient（遗漏的必须测试场景、不成立的不适用声明、被误删的有效测试）、alignment（与 Task、设计、术语表不一致）、redValidity（红阶段无效或断言质量问题）。只报告会让实现跑偏、让验收失真或留下不值得维护的测试的问题，不报告纯风格意见；四项都为空时 verdict 为 APPROVED。
 
 不要修改文件，不要执行 Git 写操作。输出严格符合 schema。`
 
@@ -395,13 +411,15 @@ ${task.body}
 
 ${taskContext({ stage, task, extraContext: '' })}
 
-只修测试文件，严禁修改生产代码。修复后重新运行测试，确认失败原因仍是“功能未实现”，把真实输出记入 redPhase。
+${TEST_POLICY}
+
+只修测试文件，严禁修改生产代码。补写或修改测试后重新运行，确认失败原因是“功能未实现”，把真实输出记入 redPhase，返回 TESTS_WRITTEN。按问题删除或合并测试后，本 Task 不再有新增或修改的测试时，返回 NOT_APPLICABLE，redPhase 写明取舍类别与替代验证，testFiles 返回空数组。
 
 ${GIT_BAN}
 
 ${GIT_RULES}
 
-返回同样符合 schema：status、baseSha（保持原 BASE_SHA 不变）、summary、redPhase、testFiles（修复后的完整测试文件清单）。`
+返回同样符合 schema：status、baseSha（保持原 BASE_SHA 不变）、summary（列出删除或合并的测试）、redPhase、testFiles（修复后的完整测试文件清单）。`
 
 const taskContext = ({ stage, task, extraContext }) => `## 上下文
 
@@ -428,19 +446,21 @@ ${taskContext({ stage, task, extraContext })}
 ## 开始前检查
 
 1. 先执行 git rev-parse HEAD，把它作为 baseSha 返回。
-2. 读取目标文件的导出与公共接口，读取直接调用方，查找已有可复用工具与测试模式。
+2. 读取目标文件的导出与公共接口，读取直接调用方，查找已有可复用工具、测试模式，以及已经覆盖目标行为的已有测试。
 3. 确认计划描述的文件、函数、字段与实际代码一致。
+
+${TEST_POLICY}
 
 ## 要求
 
 1. 调用 test-driven-development 技能，只做红阶段。
-2. 按 Task 的测试 Step 写出覆盖正常路径、边界条件与异常路径的测试，断言必须针对真实行为，不要只断言 mock 被调用。
+2. 按 Task 的测试 Step 和上方测试取舍编写测试：只为必须有测试的行为写，每个测试对应一个不同的分支或结果，断言必须针对真实行为，不要只断言 mock 被调用。计划测试 Step 中属于“不写测试”类别的场景不写，在 summary 中逐条列出跳过的场景和对应类别。
 3. 测试要因目标行为缺失而失败，失败原因必须是“功能未实现”（导入失败、属性不存在、返回值不符、断言不成立），不能是测试自身的语法错误、拼写错误或测试环境问题。
 4. 运行这些测试，把真实输出记入 redPhase，写清失败的是哪一条断言、为什么这个失败证明目标行为缺失。
-5. 只修改测试文件，严禁修改生产代码。需要生产代码配合才能写测试时，按最终接口写出调用，让它自然失败。
+5. 只修改测试文件，严禁修改生产代码。需要生产代码配合才能写测试时，按最终接口写出调用，让它自然失败。只验证本 Task 改变或删除的行为的已有测试，即使不在允许修改的文件中，也要同步修改或删除，并在 summary 中逐个列出。
 6. 不实现任何功能，不为了让测试通过而加桩代码、条件分支或临时实现。
 7. 不要修改计划文件的进度勾选。
-8. 计划中该 Task 明确没有测试 Step，且只涉及纯文档、静态资源或无行为配置时，返回 NOT_APPLICABLE，redPhase 写明依据，testFiles 返回空数组，不要编写虚假测试。
+8. Task 不包含必须有测试的行为时（例如纯文档、配置、样式、无逻辑代码、删除行为、纯测试整理），不新增测试，返回 NOT_APPLICABLE：redPhase 写明取舍类别和替代验证（计划已写明时沿用），testFiles 返回空数组。不适用声明同样会经过测试审查。
 
 ${GIT_BAN}
 
@@ -455,7 +475,7 @@ const testFilesText = (testReport) =>
 
 const implPrompt = ({ stage, task, testReport, extraContext }) => `你在实现 ${task.id}：${task.title}（TDD 绿阶段）。这是 smart-exec-plan 的一个 Task，仓库 ${CFG.repo}，当前分支 ${CFG.devBranch}。
 
-失败测试已由前一步写好并已验证为有效红阶段，本阶段让它们通过。
+${testReport.status === 'NOT_APPLICABLE' ? '测试审查已确认本 Task 不需要新增测试，按 Task 说明实现，并运行 Task 列出的替代验证。' : '失败测试已由前一步写好并已验证为有效红阶段，本阶段让它们通过。'}
 
 ## Task 完整说明
 
@@ -485,7 +505,8 @@ ${taskContext({ stage, task, extraContext })}
 4. 当前 Task 不是部署边界：完整构建或服务可以暂时不可用，前提是未完成部分明确属于后续已定义 Task。当前 Task 自己新增或修改的测试必须全部通过，数据不得丢失或损坏。
 5. 优先修改生产代码让测试通过，不要修改测试。
 6. 运行计划中该 Task 列出的验证命令，把真实输出记入 greenPhase。
-7. 自审实际差异后返回。
+7. Task 只涉及测试整理时，测试阶段已完成全部改动，不修改生产代码，运行验证后返回 DONE。
+8. 自审实际差异后返回。
 
 ${GIT_BAN}
 
@@ -509,7 +530,7 @@ ${task.body}
 
 ${testFilesText(testReport)}
 
-这些测试是红阶段产物，除非审查问题明确指出测试本身有误，否则不要删改或弱化它们来让审查通过。
+这些测试是红阶段产物，除非审查问题明确指出测试本身有误，否则不要删改或弱化它们来让审查通过。审查明确指出某个测试属于“不写测试”类别或与已有测试重复时，可以删除它，并在 summary 中列出。
 
 只修上述问题，不扩大到后续 Task，不引入开发期兼容层。计划文件不要改动，进度由提交步骤更新。
 
@@ -519,7 +540,7 @@ ${GIT_RULES}
 
 返回同样符合 schema：status、baseSha（保持原 BASE_SHA 不变）、summary、redPhase、greenPhase、changedFiles。`
 
-const specPrompt = ({ stage, task, baseSha, impl }) => `你在做 ${task.id}：${task.title} 的规格审查（与代码质量审查并行，只判断规格符合性，不评价代码质量）。仓库 ${CFG.repo}。
+const specPrompt = ({ stage, task, baseSha, impl, testReport }) => `你在做 ${task.id}：${task.title} 的规格审查（与代码质量审查并行，只判断规格符合性，不评价代码质量）。仓库 ${CFG.repo}。
 
 ## 输入
 
@@ -527,6 +548,7 @@ const specPrompt = ({ stage, task, baseSha, impl }) => `你在做 ${task.id}：$
 ${designLine(stage)}
 ${CFG.index ? `- 需求索引：${CFG.index}` : ''}
 - 实现者报告：status=${impl.status}；summary=${impl.summary}；changedFiles=${impl.changedFiles.join('、')}
+- 测试阶段（已通过测试审查）：status=${testReport.status}；summary=${testReport.summary || '无'}
 - BASE_SHA：${baseSha}
 - 计划文件 ${planPath(stage)} 中本 Stage 后续 Task 用于判断哪些集成由后续承担
 
@@ -536,8 +558,8 @@ ${CFG.index ? `- 需求索引：${CFG.index}` : ''}
 
 ## 检查
 
-1. 缺失要求：Task 每项要求、计划规定的测试与边界行为是否实现。
-2. 多余内容：是否实现后续 Task 职责、是否增加最终需求未要求的功能、是否过度抽象。
+1. 缺失要求：Task 每项要求、计划规定的测试与边界行为是否实现。测试阶段按测试取舍跳过、并已通过测试审查的计划测试场景不算缺失。
+2. 多余内容：是否实现后续 Task 职责、是否增加最终需求未要求的功能、是否新增计划未要求或属于“不写测试”类别的测试、是否过度抽象。
 3. 最终状态设计：是否使用设计定义的最终接口与命名，是否偏离术语表。
 4. 开发期兼容机制：新旧接口并存、adapter、双读双写、临时 schema、feature flag 分批迁移、为中间服务保留的旧调用链。除非设计明确要求长期兼容，否则判为多余实现。
 5. 数据安全：是否可能丢失、重复或错误转换数据，计划要求的数据保护是否实现。
@@ -566,7 +588,7 @@ ${designLine(stage)}
 
 1. 正确性：逻辑、边界与错误条件、数据损坏或无声吞错。
 2. 清晰度与维护性：命名是否符合术语表，职责是否清晰，是否有重复或不必要抽象，是否遵循代码库已有模式。
-3. 测试质量：是否观察到有效红阶段，是否有真实行为断言而不是只断言 mock，正常/边界/错误是否覆盖。
+3. 测试质量：需要测试时是否观察到有效红阶段；断言是否针对真实行为而不是只断言 mock；进入不同分支的行为是否都有断言；是否存在文本断言、“已删除”断言、实现细节断言、中间状态断言或与已有测试重复的测试；测试名是否不含 Stage、Task 或计划编号。
 4. 文件范围：是否只改允许文件，新文件是否有明确职责，是否漏查直接调用方。
 5. 最终状态优先：标记新旧接口并存、adapter、双读双写、临时 schema、feature flag 迁移与旧调用链保留。
 
@@ -615,9 +637,9 @@ ${review.issues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}
 ${(review.fixTasks || []).length ? `\n审查者已给出修复 Task 草案，按草案落笔，缺失字段自行补全：\n${review.fixTasks.map((t, i) => `${i + 1}. ${t.title}\n   文件：${(t.files || []).join('、')}\n   提交信息：${t.commitMessage}\n   正文：${t.body}`).join('\n')}` : ''}
 
 步骤：
-1. 读取 ${planPath(stage)}，在文件末尾“## Stage 审查”之前追加 “### Task ${stage}-修复N：标题” 小节，一个修复 Task 对应一个 Draft，包含 **依赖**、**文件**、**提交信息**、#### Step 1 编写失败测试 / #### Step 2 实现最终行为 / #### Step 3 验证与整理，格式与既有 Task 完全一致。
+1. 读取 ${planPath(stage)}，在文件末尾“## Stage 审查”之前追加 “### Task ${stage}-修复N：标题” 小节，一个修复 Task 对应一个 Draft，包含 **依赖**、**文件**、**提交信息**、#### Step 1 编写失败测试 / #### Step 2 实现最终行为 / #### Step 3 验证与整理，格式与既有 Task 完全一致。修复不涉及必须有测试的行为时（例如删除重复或不值得保留的测试、调整命名、补充文档），Step 1 写成 “#### Step 1 确认无需新增测试”，写明取舍类别和替代验证。
 2. 同时在进度清单末尾追加对应的 \`- [ ] Task ${stage}-修复N：标题\`，顺序与正文一致。
-3. 修复 Task 必须有明确文件、行为、测试与提交信息，不新增设计决策。问题之间存在依赖时在 **依赖** 中写明先后。
+3. 修复 Task 必须有明确文件、行为、验证方式与提交信息，不新增设计决策。问题之间存在依赖时在 **依赖** 中写明先后。
 
 只修改计划文件，不改代码，不执行 git add 或 git commit。完成后返回新增 Task 标题，每行一个。`
 
@@ -662,6 +684,7 @@ ${verifyText(verify)}
 2. Task 间集成：各 Task 建立的接口与数据结构是否一致，是否有断连调用或重复职责，是否为后续 Stage 提供约定产物。
 3. 最终状态方向：是否朝全部 Stage 完成后的最终架构推进，是否引入设计未要求的新旧接口并存、adapter、双读双写、临时 schema、feature flag 迁移或旧调用链。
 4. 数据安全：是否可能丢失、重复或错误转换数据。
+5. 测试取舍：本 Stage 新增的测试是否有同一行为的重复测试、文本断言、“已删除”断言或只验证中间状态的测试；本 Stage 改变或删除的行为，其旧测试是否已同步更新或删除。只在问题明确时列入 issues，对应修复 Task 只调整测试并写明无需新增测试。
 
 ${finalState ? '' : 'Stage 不是部署边界：整体构建暂时失败、服务暂时无法启动、后续 Stage 负责的调用方未迁移本身不是问题。\n'}
 若 NEEDS_CHANGES，在 issues 中给出可直接执行的问题条目，在 fixTasks 中给出对应的修复 Task（标题、完整正文、文件、提交信息）。
@@ -687,7 +710,7 @@ ${contextLine}
 
 1. 完整需求：需求索引中每项成功标准是否满足，明确排除的功能是否没有实现，全部 Stage 职责是否完成。
 2. 跨 Stage 集成：组件接口、数据结构、错误类型是否一致，数据流是否符合设计，是否存在断连调用链或未迁移调用方。
-3. 最终架构：是否符合设计的最终结构，术语是否与术语表一致，旧实现、临时接口、过渡代码是否清除。
+3. 最终架构：是否符合设计的最终结构，术语是否与术语表一致，旧实现、临时接口、过渡代码以及只验证中间状态或已删除行为的测试是否清除。
 4. 数据安全：迁移与最终约束是否正确，是否会丢失、重复或错误转换数据。
 
 若 NEEDS_CHANGES，在 issues 中给出问题条目，在 fixTasks 中给出可直接执行的修复 Task（标题、完整正文、文件、提交信息），修复会追加到最后一个 Stage 的计划。
@@ -726,6 +749,14 @@ const previousIssuesBlock = (previousIssues) =>
 
 const isBlockedStatus = (result) => result.status === 'BLOCKED' || result.status === 'NEEDS_CONTEXT'
 
+// TESTS_WRITTEN 必须带红阶段证据与测试文件；NOT_APPLICABLE 必须在 redPhase 写明取舍类别与替代验证。
+const testReportGap = (tests) => {
+  if (tests.status === 'NOT_APPLICABLE') return tests.redPhase ? '' : '声明不适用但未说明理由'
+  if (!tests.redPhase) return '未提供红阶段证据'
+  if (!tests.testFiles.length) return '未返回测试文件清单'
+  return ''
+}
+
 const fail = (blocked) => {
   report.blocked = blocked
 }
@@ -741,7 +772,7 @@ async function runReviewLoop(task, stage, baseSha, initialImpl, testReport) {
     const tag = nth(taskTag(stage, task), round)
     const previous = previousIssuesBlock(previousIssues)
     const [spec, quality] = await parallel([
-      () => call('spec', specPrompt({ stage, task, baseSha, impl }) + previous, {
+      () => call('spec', specPrompt({ stage, task, baseSha, impl, testReport }) + previous, {
         label: `Spec: ${tag}`,
         schema: SPEC_SCHEMA,
       }),
@@ -780,6 +811,7 @@ async function runReviewLoop(task, stage, baseSha, initialImpl, testReport) {
 }
 
 // 测试审查循环：未通过时打回测试编写者修复，复审附上一轮问题。baseSha 固定不变，保证 Task 审查范围不漂移。
+// 修复可以在 TESTS_WRITTEN 与 NOT_APPLICABLE 之间切换（补写遗漏的测试，或删掉不值得保留的测试），切换后照常复审。
 async function runTestReviewLoop(stage, task, initialTests) {
   let tests = initialTests
   let previousIssues = null
@@ -808,9 +840,8 @@ async function runTestReviewLoop(stage, task, initialTests) {
     })
     if (!fixed) return { ok: false, reason: '测试修复无返回' }
     if (isBlockedStatus(fixed)) return { ok: false, reason: `测试修复阻塞：${fixed.blockingReason || fixed.missingContext}` }
-    if (fixed.status !== 'TESTS_WRITTEN' || !fixed.redPhase || !fixed.testFiles.length) {
-      return { ok: false, reason: `${task.id} 测试修复后缺少红阶段证据或测试文件` }
-    }
+    const gap = testReportGap(fixed)
+    if (gap) return { ok: false, reason: `${task.id} 测试修复后${gap}` }
     tests = { ...fixed, baseSha: tests.baseSha }
   }
   return { ok: false, reason: `测试审查在 ${CFG.limits.reviewRounds} 轮内未通过：${(previousIssues || []).join('；')}` }
@@ -837,18 +868,15 @@ async function implementOneTask(stage, task, allowPlanAppend) {
   if (!tests) return { ok: false, reason: '测试编写者无返回' }
   if (isBlockedStatus(tests)) return { ok: false, reason: `测试编写阻塞：${tests.blockingReason || tests.missingContext}` }
   if (!tests.baseSha) return { ok: false, reason: `${task.id} 测试编写者未返回 BASE_SHA` }
-  if (tests.status === 'TESTS_WRITTEN') {
-    if (!tests.redPhase) return { ok: false, reason: `${task.id} 测试编写者未提供红阶段证据` }
-    if (!tests.testFiles.length) return { ok: false, reason: `${task.id} 测试编写者未返回测试文件清单` }
-    log(`${task.id} 红阶段就绪：${tests.testFiles.length} 个测试文件`)
+  const gap = testReportGap(tests)
+  if (gap) return { ok: false, reason: `${task.id} 测试编写者${gap}` }
+  log(tests.status === 'TESTS_WRITTEN' ? `${task.id} 红阶段就绪：${tests.testFiles.length} 个测试文件` : `${task.id} 声明不适用测试：${tests.redPhase}`)
 
-    // 测试审查通过后才进入实现，避免实现者被迫迎合错误或不充分的测试。
-    const testReview = await runTestReviewLoop(stage, task, tests)
-    if (!testReview.ok) return { ok: false, reason: testReview.reason }
-    tests = testReview.tests
-  } else {
-    log(`${task.id} 不适用测试：${tests.redPhase}`)
-  }
+  // 测试审查通过后才进入实现，避免实现者被迫迎合错误或不充分的测试。
+  // 不适用声明同样审查：不成立时由测试修复补写测试，再进入实现。
+  const testReview = await runTestReviewLoop(stage, task, tests)
+  if (!testReview.ok) return { ok: false, reason: testReview.reason }
+  tests = testReview.tests
 
   // 第二步：让已存在的失败测试转绿。实现者不得删改测试来迎合自己。
   const impl = await withContextRetry(

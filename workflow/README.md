@@ -47,7 +47,7 @@ branch-brief  →  branch-review  →  audit-and-grill
 | `smart-exec-plan` | 管理开发分支、Task commit 和 Stage `--no-ff` 合并 |
 | `smart-exec-plan-workflow` | 把上述流程固化为 workflow 脚本，审查计划后由脚本连续执行 |
 | `executing-plans` | 解析计划并按 Stage、Task Group、Task、Step 推进 |
-| `test-driven-development` | 在每个 Task 内执行红—绿—重构 |
+| `test-driven-development` | 决定哪些行为值得测试，并在 Task 内执行红—绿—重构 |
 | `subagent-driven-development` | 分派实现者并执行 Task、Stage 和最终审查 |
 | `code-review` | 通用代码审查和审查反馈处理 |
 | `audit-and-grill` | 声明级一致性审计与对抗性复核 |
@@ -81,7 +81,7 @@ smart-exec-plan 设启动分支为 `x`，按实际开发内容创建分支 `y`�
 
 ## 验证边界
 
-- Task：当前行为的失败测试和目标测试。
+- Task：必须有测试的行为先写失败测试再实现；其余运行计划写明的替代验证。
 - Stage：设计覆盖、Task 集成和后续契约。
 - 全部 Stage：完整构建、类型检查、lint、单元测试、集成测试和最终审查。
 

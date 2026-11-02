@@ -44,10 +44,10 @@ export const meta = {
 |---|---|---|---|---|
 | 1 | Scout | 分支、HEAD、工作区状态；计划进度清单 | `PREFLIGHT_SCHEMA`、`TASK_LIST_SCHEMA` | 否 |
 | 2 | TestDesign | Task 全文、设计、术语表、允许文件 | `TEST_SCHEMA` | 否 |
-| 3 | TestReview | Task 全文、设计、测试文件、红阶段记录、baseSha | `TEST_REVIEW_SCHEMA` | 否 |
+| 3 | TestReview | Task 全文、设计、测试报告（状态、测试文件、红阶段记录或不适用理由）、baseSha | `TEST_REVIEW_SCHEMA` | 否 |
 | 4 | TestFix | Task 全文、测试审查问题清单 | `TEST_SCHEMA` | 否 |
-| 5 | Implement | Task 全文、测试报告（红阶段与测试文件） | `IMPL_SCHEMA` | 否 |
-| 6 | ImplReview | Task 全文、BASE_SHA、实现者报告、红/绿阶段结果 | `SPEC_SCHEMA`、`QUALITY_SCHEMA` | 否 |
+| 5 | Implement | Task 全文、测试报告（红阶段与测试文件，或不适用理由） | `IMPL_SCHEMA` | 否 |
+| 6 | ImplReview | Task 全文、BASE_SHA、实现者报告、测试报告、红/绿阶段结果 | `SPEC_SCHEMA`、`QUALITY_SCHEMA` | 否 |
 | 7 | ImplFix | Task 全文、规格与质量审查问题清单、测试报告 | `IMPL_SCHEMA` | 否 |
 | 8 | Commit | Task 提交信息、审查结论；需求索引执行状态 | `COMMIT_SCHEMA` | 是：`git add`、`git commit`、`git commit --amend` |
 | 9 | StageRev | STAGE_BASE_SHA..HEAD、设计、计划、Stage 验证结果 | `STAGE_REVIEW_SCHEMA`、`FINAL_SCHEMA` | 否 |
@@ -58,9 +58,9 @@ export const meta = {
 
 TestDesign、TestReview 与 Implement 由三个独立代理完成：
 
-- 测试编写者只写会失败的目标测试，运行后在 `redPhase` 记录失败原因，确认是功能缺失而不是语法或导入错误；不得修改生产代码
-- 测试审查者在实现之前检查测试的必要性、充分性、与 Task 和设计的一致性、红阶段有效性；未通过时把问题打回测试编写者修复（测试修复归属 TestFix phase），复审通过才进入 Implement
-- 没有测试 Step 的 Task（纯文档、静态资源、无行为配置）返回 `NOT_APPLICABLE` 并在 `redPhase` 写明理由，跳过 TestReview，实现者照常执行
+- 测试编写者按测试取舍（模板中的 `TEST_POLICY`）只写会失败的目标测试，运行后在 `redPhase` 记录失败原因，确认是功能缺失而不是语法或导入错误；计划中属于“不写测试”类别的场景跳过并在 `summary` 列出；只验证本 Task 改变或删除的行为的旧测试同步修改或删除；不得修改生产代码
+- 测试审查者在实现之前检查测试的必要性（是否值得写）、充分性、与 Task 和设计的一致性、红阶段有效性；未通过时把问题打回测试编写者修复（测试修复归属 TestFix phase），复审通过才进入 Implement
+- 不包含必须测试行为的 Task（纯文档、配置、样式、无逻辑代码、删除行为、纯测试整理）返回 `NOT_APPLICABLE`，在 `redPhase` 写明取舍类别与替代验证；该声明同样进入 TestReview，复核通过后实现者照常执行
 - 实现者拿到测试文件清单与红阶段输出，只改生产代码使其转绿，在 `greenPhase` 记录真实输出；不得删改、跳过或放宽测试
 - 两者都返回 BLOCKED / NEEDS_CONTEXT 时各自最多补充 `implRetries` 次上下文，每次交给新代理
 - Task 审查范围从测试编写者返回的 `baseSha` 起算，测试与实现差异一并审查
@@ -100,7 +100,8 @@ TestDesign → TestReview ─ 通过 → Implement → ImplReview（spec ∥ qua
 测试审查循环：
 
 - 问题取 `necessary`、`sufficient`、`alignment`、`redValidity`，分别加 `[必要性]`、`[充分性]`、`[一致性]`、`[红阶段]` 前缀
-- 修复者只改测试文件，修复后必须重新给出 `TESTS_WRITTEN`、红阶段证据与完整测试文件清单，否则停止
+- 修复者只改测试文件。修复后给出 `TESTS_WRITTEN` 时必须带红阶段证据与完整测试文件清单；删除或合并测试后不再有新增或修改的测试时给出 `NOT_APPLICABLE` 并写明理由；缺证据即停止
+- 不适用声明不成立时，审查者把需要补写的测试场景写入 `sufficient`，由修复者补写后转为 `TESTS_WRITTEN` 再复审
 
 实现审查循环：
 
@@ -188,7 +189,7 @@ Stage 状态更新：
 |---|---|
 | `PREFLIGHT_SCHEMA` | `branch`、`headSha`、`clean`、`dirtyFiles`、`branchMatches` |
 | `TASK_LIST_SCHEMA` | `stage`、`stageTitle`、`headSha`、`clean`、`dirtyFiles`、`tasks[]` |
-| `TEST_SCHEMA` | `status`（`TESTS_WRITTEN` / `NOT_APPLICABLE` / `BLOCKED` / `NEEDS_CONTEXT`）、`baseSha`、`summary`、`redPhase`、`testFiles` |
+| `TEST_SCHEMA` | `status`（`TESTS_WRITTEN` / `NOT_APPLICABLE` / `BLOCKED` / `NEEDS_CONTEXT`）、`baseSha`、`summary`、`redPhase`（`NOT_APPLICABLE` 时为取舍类别与替代验证）、`testFiles` |
 | `TEST_REVIEW_SCHEMA` | `verdict`、`necessary`、`sufficient`、`alignment`、`redValidity` |
 | `IMPL_SCHEMA` | `status`、`baseSha`、`summary`、`redPhase`、`greenPhase`、`changedFiles` |
 | `SPEC_SCHEMA` | `status`、`missing`、`extra`、`designDeviations`、`dataRisks` |
@@ -270,11 +271,12 @@ label 统一为 `{前缀}: S{stage} T{group}-{task} #{n}`，由 `taskTag` 与 `n
 2. `CFG` 中的路径、分支、验证命令都来自实际文件，没有占位符残留
 3. `CALL_PHASE` 中的 phase 值都在 `meta.phases` 中存在，除 `call` 内部外没有直接调用 `agent()`
 4. `parallel` 只出现在 ImplReview phase 的规格与质量审查，没有 `pipeline` / `isolation`
-5. 每个审查循环都有轮次上限与超限返回值；TestReview 通过才进入 Implement，ImplReview 循环两个审查都通过才返回成功，minor 不触发修复
+5. 每个审查循环都有轮次上限与超限返回值；TestReview 通过才进入 Implement（`NOT_APPLICABLE` 也要经过 TestReview），ImplReview 循环两个审查都通过才返回成功，minor 不触发修复
 6. 每条停止路径都写入 `blocked` 并 `break`
 7. Git 写操作只出现在 `Commit` 与 `Merge` phase 的提示中
 8. 测试编写者、测试审查者、实现者与审查者的提示包含禁止 Git 写操作的约束；测试编写者与测试修复者禁止改生产代码，实现者禁止删改测试
-9. 最终验证与最终审查只在配置的最后一个 Stage 执行，位于状态 amend 与合并之前，验证通过后才审查；收尾修复后先复审再重新验证，三类修复共享 `finalRepairs`
-10. Stage 验证失败不直接停止，只作为 Stage 审查的输入
-11. 脚本没有使用 `Date.now()`、`Math.random()` 或其它不可恢复的调用
-12. `CFG.efforts` 的键都是 `meta.phases` 中的 phase 或 `CALL_PHASE` 中的调用类型，没有配置 `model`
+9. 测试编写、测试审查与测试修复的提示都包含 `TEST_POLICY`，内容与 test-driven-development 技能的“测试取舍”一致
+10. 最终验证与最终审查只在配置的最后一个 Stage 执行，位于状态 amend 与合并之前，验证通过后才审查；收尾修复后先复审再重新验证，三类修复共享 `finalRepairs`
+11. Stage 验证失败不直接停止，只作为 Stage 审查的输入
+12. 脚本没有使用 `Date.now()`、`Math.random()` 或其它不可恢复的调用
+13. `CFG.efforts` 的键都是 `meta.phases` 中的 phase 或 `CALL_PHASE` 中的调用类型，没有配置 `model`

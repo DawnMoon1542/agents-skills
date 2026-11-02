@@ -1,11 +1,11 @@
 ---
 name: smart-exec-plan
-description: writing-plans 完成全部 Stage 后使用——创建开发分支，组合 executing-plans、TDD 和子代理审查逐 Task 提交，并在每个 Stage 后以 --no-ff 合并回原分支
+description: writing-plans 完成全部 Stage 后使用——创建开发分支，组合 executing-plans、TDD 和子代理审查按 Task Group 提交，并在每个 Stage 后以 --no-ff 合并回原分支
 ---
 
 # 智能执行全部 Stage 计划
 
-一次连续执行 brainstorming、grill-with-docs 和 writing-plans 已确认的全部 Stage。设启动分支为 `x`，创建开发分支 `y`；每个 Task 在 `y` 上形成一个 commit，每个 Stage 完成后使用 `--no-ff` 合并到 `x`。
+一次连续执行 brainstorming、grill-with-docs 和 writing-plans 已确认的全部 Stage。设启动分支为 `x`，创建开发分支 `y`；每个 Task Group 在 `y` 上形成一个 commit，Group 内 Task 按计划顺序独立实现和审查；每个 Stage 完成后使用 `--no-ff` 合并到 `x`。
 
 **开始时声明：** “我正在使用 smart-exec-plan 技能连续执行全部 Stage 计划。”
 
@@ -49,7 +49,7 @@ digraph smart_exec {
     "创建开发分支 y" [shape=box];
     "提交当前需求文档" [shape=box];
     "记录 IMPLEMENTATION_BASE_SHA" [shape=box];
-    "执行 Stage Task 循环" [shape=box];
+    "执行 Stage Group/Task 循环" [shape=box];
     "Stage 审查" [shape=box];
     "最后一个 Stage？" [shape=diamond];
     "完整验证和最终审查" [shape=box];
@@ -62,15 +62,15 @@ digraph smart_exec {
     "检查计划和工作区" -> "创建开发分支 y";
     "创建开发分支 y" -> "提交当前需求文档";
     "提交当前需求文档" -> "记录 IMPLEMENTATION_BASE_SHA";
-    "记录 IMPLEMENTATION_BASE_SHA" -> "执行 Stage Task 循环";
-    "执行 Stage Task 循环" -> "Stage 审查";
+    "记录 IMPLEMENTATION_BASE_SHA" -> "执行 Stage Group/Task 循环";
+    "执行 Stage Group/Task 循环" -> "Stage 审查";
     "Stage 审查" -> "最后一个 Stage？";
     "最后一个 Stage？" -> "完整验证和最终审查" [label="是"];
     "最后一个 Stage？" -> "更新 Stage 状态并 amend" [label="否"];
     "完整验证和最终审查" -> "更新 Stage 状态并 amend";
     "更新 Stage 状态并 amend" -> "--no-ff 合并 y 到 x";
     "--no-ff 合并 y 到 x" -> "还有 Stage？";
-    "还有 Stage？" -> "执行 Stage Task 循环" [label="是，切回 y"];
+    "还有 Stage？" -> "执行 Stage Group/Task 循环" [label="是，切回 y"];
     "还有 Stage？" -> "保留 y 并报告" [label="否"];
 }
 ```
@@ -169,9 +169,11 @@ git switch -c <y>
 
 完成可选文档提交后记录当前 HEAD 为 `IMPLEMENTATION_BASE_SHA`。最终代码审查从该 SHA 开始，不把需求文档提交计入实现差异。
 
-## 5. 执行 Task
+## 5. 执行 Task Group 和 Task
 
-每个 Stage 开始前记录 `STAGE_BASE_SHA`。每个 Task 按以下顺序执行：
+每个 Stage 开始前记录 `STAGE_BASE_SHA`。每个 Task Group 开始前记录 `GROUP_BASE_SHA`，并确认计划为当前 Group 提供提交信息。计划缺少 Group 提交信息时停止，回到 writing-plans 补齐提交边界。
+
+Group 内每个 Task 按以下顺序执行：
 
 1. executing-plans 重新读取当前计划进度并定位 Task。
 2. 记录当前 HEAD 为 `TASK_BASE_SHA`。
@@ -182,18 +184,19 @@ git switch -c <y>
 7. 规格通过后执行代码质量审查。
 8. 原实现者修复质量问题并重新审查。
 9. 审查通过后更新计划进度，将当前 Task 标记为完成。
-10. 检查暂存范围只包含当前 Task 的代码、测试和计划文件。
-11. 使用计划中的提交信息提交。
-12. 确认工作区干净，再进入下一个 Task。
+10. 检查暂存范围只包含当前 Group 已批准 Task 的代码、测试和计划文件。
+11. 当前 Task 是 Group 内第一个 Task 时，使用当前 Group 的提交信息创建 Group commit。
+12. 当前 Task 不是 Group 内第一个 Task 时，使用 `git commit --amend --no-edit` 合入当前 Group commit。
+13. 确认工作区干净，再进入下一个 Task。
 
-一个 Task 只生成一个 commit。实现者和审查者不得提交。
+同一个 Task Group 只生成一个最终 commit。Group 内后续 Task 通过 amend 合入该 Group commit，不保留逐 Task commit。实现者和审查者不得提交。
 
-Task commit 必须包含：
+Group commit 必须包含：
 
-- 当前 Task 的生产代码
-- 当前 Task 的测试
-- 当前 Task 对计划进度的更新
-- 审查中完成的修复
+- 当前 Group 内全部已批准 Task 的生产代码
+- 当前 Group 内全部已批准 Task 的测试
+- 当前 Group 内全部已批准 Task 对计划进度的更新
+- 当前 Group 审查中完成的修复
 
 不得生成纯进度 commit。提交信息必须符合仓库约定：英文类型、中文标题、中文正文。
 
@@ -203,7 +206,7 @@ Task 和 Stage 不承担服务连续运行要求。中间 commit 可以暂时无
 
 每个 Task 仍须满足：
 
-- 当前 Task 的红阶段失败正确
+- 需要测试的 Task 红阶段失败正确；计划写明无需新增测试的 Task 已运行替代验证
 - 当前 Task 的目标测试通过
 - 规格和质量审查通过
 - 数据没有丢失或损坏
@@ -213,14 +216,14 @@ Task 和 Stage 不承担服务连续运行要求。中间 commit 可以暂时无
 
 ## 7. Stage 审查和修复 Task
 
-当前 Stage 所有计划 Task 已提交后，使用 stage-reviewer-prompt 审查 `STAGE_BASE_SHA..HEAD`。
+当前 Stage 所有计划 Task Group 已提交后，使用 stage-reviewer-prompt 审查 `STAGE_BASE_SHA..HEAD`。
 
 返回 NEEDS_CHANGES 时：
 
 1. 在当前 Stage 计划的进度清单和正文中追加具体修复 Task。
-2. 修复 Task 必须写明文件、行为、测试和提交信息。
+2. 修复 Task 必须写明文件、行为、验证方式和所属 Group 提交信息；验证方式按 test-driven-development 的“测试取舍”确定。
 3. 按标准 Task 循环实现和审查。
-4. 将计划更新、修复代码和测试提交为一个 commit。
+4. 将计划更新、修复代码和测试合入修复 Task 所属 Group commit。
 5. 重新执行 Stage 审查，直到 APPROVED。
 
 不得用纯文档 commit 添加修复 Task。
@@ -248,11 +251,11 @@ Stage 审查通过后，在 brainstorming 索引中把当前 Stage 执行状态�
 
 1. 暂存 brainstorming 索引。
 2. 确认只有该 Stage 状态发生变化。
-3. 使用 `git commit --amend --no-edit` 合入当前 Stage 最后一个 Task commit。
+3. 使用 `git commit --amend --no-edit` 合入当前 Stage 最后一个 Group commit。
 4. 记录 amend 后新的 `Y_STAGE_HEAD_SHA`。
 5. 确认工作区干净。
 
-每个 Stage 必须至少包含一个 Task，因此始终存在可承载状态更新的最后一个 Task commit。
+每个 Stage 必须至少包含一个 Task Group，因此始终存在可承载状态更新的最后一个 Group commit。
 
 ## 10. `--no-ff` 合并到原分支
 
@@ -273,7 +276,7 @@ Stage 状态更新完成后：
 ```text
 merge: 完成 <功能名称> Stage N
 
-集成 Stage N 的全部 Task、测试及进度记录。
+集成 Stage N 的全部 Task Group、测试及进度记录。
 ```
 
 `y` 不需要合并 `x` 上刚产生的 merge commit。后续 Stage 继续在 `y` 的线性历史上提交，下一 Stage 再次使用 `--no-ff` 合并。
@@ -287,7 +290,7 @@ merge: 完成 <功能名称> Stage N
 1. 执行 `git merge --abort`。
 2. 确认 `x` 回到合并前预期 HEAD。
 3. 切回 `y`。
-4. 保留全部 Task commit。
+4. 保留全部 Group commit。
 5. 报告冲突文件和两个分支 SHA。
 6. 停止，不自行选择冲突内容。
 
@@ -295,8 +298,9 @@ merge: 完成 <功能名称> Stage N
 
 保留当前未提交修改，不 reset、不 stash。报告：
 
+- 当前 Stage 和 Group
 - 当前 Stage 和 Task
-- 已完成 Task
+- 已完成 Group 和 Task
 - 阻塞原因
 - 工作区状态
 - `x` 和 `y` 的 SHA
@@ -321,7 +325,7 @@ merge: 完成 <功能名称> Stage N
 - 开发分支 `y`
 - `X_BASE_SHA`
 - `IMPLEMENTATION_BASE_SHA`
-- 每个 Stage 的最终 Task SHA
+- 每个 Stage 的最终 Group SHA
 - 每个 Stage 的 merge commit SHA
 - 完整验证命令和结果
 - 最终审查状态
