@@ -1,6 +1,6 @@
 ---
 name: branch-brief
-description: 为当前分支生成一份可直接交付他人的简报——相对基线分支的 diff 规模（新增/删除行数、文件数）、按主题归类的主要更新、breaking change、其他人必须了解的迁移与配置变化、需要人工验证的清单。用于合并前通知、测试交接、发布说明初稿、接手分支时快速建立全局认知。
+description: 为当前分支生成一份可直接交付他人的简报——相对基线分支的 diff 规模（新增/删除行数、文件数，含剔除测试与文档后的代码改动规模）、按主题归类的主要更新、breaking change、其他人必须了解的迁移与配置变化、需要人工验证的清单。用于合并前通知、测试交接、发布说明初稿、接手分支时快速建立全局认知。
 ---
 
 # 分支简报
@@ -56,22 +56,63 @@ git log --oneline -n 20
 
 ```bash
 git diff --shortstat $BASE_SHA..HEAD
-git diff --numstat $BASE_SHA..HEAD
 git diff --stat $BASE_SHA..HEAD
 git log --oneline --no-merges $BASE_SHA..HEAD
 ```
 
-简报中至少给出：
+总规模之外再单独统计一份代码规模：剔除测试文件与文档之后的文件数、行数。这一项反映实际需要审阅的实现代码量，读者据此判断投入多少精力读 diff。
 
-| 指标 | 取法 |
-|---|---|
-| 新增/删除行数 | `git diff --shortstat` 的 `X insertions(+), Y deletions(-)` |
-| 变更文件数 | 同上 `N files changed` |
-| commit 数 | `--no-merges` 计数，合并提交单独列出 |
-| 按目录聚合 | `--numstat` 按前两级路径求和，取前 10 |
-| 二进制与重命名 | `--numstat` 中 `-` 开头的行、`git diff --summary` 的 rename 记录 |
+```bash
+CODE_EXCLUDE=(
+  ':(exclude,glob)*.md'
+  ':(exclude,glob)**/*.md'
+  ':(exclude,glob)**/*.mdx'
+  ':(exclude,glob)**/*.rst'
+  ':(exclude,glob)**/*.adoc'
+  ':(exclude,glob)**/*.txt'
+  ':(exclude,glob)docs/**'
+  ':(exclude,glob)**/docs/**'
+  ':(exclude,glob)test/**'
+  ':(exclude,glob)**/test/**'
+  ':(exclude,glob)**/tests/**'
+  ':(exclude,glob)**/__tests__/**'
+  ':(exclude,glob)**/testing/**'
+  ':(exclude,glob)**/spec/**'
+  ':(exclude,glob)**/testdata/**'
+  ':(exclude,glob)**/__fixtures__/**'
+  ':(exclude,glob)**/*.test.*'
+  ':(exclude,glob)**/*.spec.*'
+  ':(exclude,glob)**/*_test.go'
+  ':(exclude,glob)**/*Test.java'
+  ':(exclude,glob)**/test_*.py'
+  ':(exclude,glob)**/*_test.py'
+  ':(exclude,glob)**/conftest.py'
+)
 
-排除噪声时明确写出口径：生成的锁文件、快照、vendor 目录、格式化产生的整文件重写分别统计并单独说明，不要从总数里悄悄扣掉。
+# 代码规模
+git diff --shortstat $BASE_SHA..HEAD -- . "${CODE_EXCLUDE[@]}"
+# 被剔除掉的文件清单（用于核对口径与自检相加关系）
+comm -23 <(git diff --name-only $BASE_SHA..HEAD | sort) \
+         <(git diff --name-only $BASE_SHA..HEAD -- . "${CODE_EXCLUDE[@]}" | sort)
+```
+
+被剔除部分的文件数与行数取差值：总规模减去代码规模。不要用只含排除项的路径规格单独跑一次 diff，git 对纯排除 pathspec 的结果不符合预期。
+
+先核对仓库的实际目录约定（读 `ls`、测试配置、CI 脚本），把不存在的模式删掉，把命中的测试或文档目录补进去。例如测试集中在 `src/**/__mocks__/` 或文档在 `site/` 时，按实际路径调整，不要照抄模板路径而不验证。
+
+自检：代码规模与被剔除部分相加必须等于总规模（文件数、新增行、删除行三项分别相等），对不上说明路径通配写错或命中范围有重叠，修正后再写进简报。工作区不干净时，未提交改动部分用同一套路径规格单独统计。
+
+简报的 Diff 规模一节只写以下七项，不写取法说明与命令来源，不做按目录聚合：
+
+- 变更文件数：`git diff --shortstat` 的 `N files changed`
+- 新增行：同一输出的 `X insertions(+)`
+- 删除行：同一输出的 `Y deletions(-)`
+- commit 数：`git log --oneline --no-merges $BASE_SHA..HEAD` 的行数
+- 剔除测试与文档后的变更文件数：`CODE_EXCLUDE` 路径规格过滤后的 `--shortstat`
+- 剔除测试与文档后的新增行：同一过滤后的输出
+- 剔除测试与文档后的删除行：同一过滤后的输出
+
+剔除测试与文档是并列的独立指标，不是替换总规模，两组数字同时出现。排除口径在内部核对时确定：剔除了哪些目录与后缀、是否包含快照与 fixture。生成的锁文件、快照、vendor 目录、格式化产生的整文件重写单独核对，不从总数里悄悄扣掉。
 
 ## 3. 提取主要更新
 
@@ -95,15 +136,13 @@ git log --oneline --no-merges $BASE_SHA..HEAD
 
 逐项检查以下类别，命中的必须写进 breaking change 节：
 
-| 类别 | 检查方式 |
-|---|---|
-| 公开接口变更 | 导出符号、路由、CLI 参数、事件名、环境变量的增删改 |
-| 数据格式与 Schema | 迁移文件、序列化字段重命名、必填字段新增、枚举值删除 |
-| 配置与部署 | 新增必填配置、默认值变化、端口或路径改变 |
-| 依赖 | 主版本升级、移除的传递依赖、运行时版本要求变化 |
-| 构建与工具链 | 脚本命令改名、产物路径变化、Node/Python 版本底线 |
-| 行为语义 | 同一输入产生不同输出、错误类型变化、排序或分页规则变化 |
-| 删除的能力 | 被移除的旧实现、旧调用链、兼容层 |
+- 公开接口变更：导出符号、路由、CLI 参数、事件名、环境变量的增删改
+- 数据格式与 Schema：迁移文件、序列化字段重命名、必填字段新增、枚举值删除
+- 配置与部署：新增必填配置、默认值变化、端口或路径改变
+- 依赖：主版本升级、移除的传递依赖、运行时版本要求变化
+- 构建与工具链：脚本命令改名、产物路径变化、Node/Python 版本底线
+- 行为语义：同一输入产生不同输出、错误类型变化、排序或分页规则变化
+- 删除的能力：被移除的旧实现、旧调用链、兼容层
 
 判定标准：**不修改调用方或部署配置就能继续工作的，不算 breaking。**
 
@@ -148,23 +187,17 @@ git log --oneline --no-merges $BASE_SHA..HEAD
 
 - 基线：<BASE_REF> @ <BASE_SHA 前 8 位>
 - HEAD：<HEAD_SHA 前 8 位>
-- 规模：N 个文件，+X / -Y 行，M 个 commit
 - 一句话：<这个分支解决什么问题>
 
 ## Diff 规模
 
-| 指标 | 数值 |
-|---|---|
-| 文件数 | |
-| 新增行 | |
-| 删除行 | |
-| commit 数 | |
-| 合并提交 | |
-
-按目录：
-| 目录 | + | - |
-
-排除口径：<被单独统计的生成文件、锁文件、格式化重写>
+- 变更文件数：
+- 新增行：
+- 删除行：
+- commit 数：
+- 剔除测试与文档后变更文件数：
+- 剔除测试与文档后新增行：
+- 剔除测试与文档后删除行：
 
 ## 主要更新
 
@@ -176,10 +209,12 @@ git log --oneline --no-merges $BASE_SHA..HEAD
 
 ## Breaking change
 
-| 变更 | 影响面 | 迁移方式 | 确认状态 |
-|---|---|---|---|
+无 breaking change 时写“无”，并说明依据（例如仅新增可选参数、无公开接口变化）。有则每条按四项写：
 
-无 breaking change 时写明"无"，并说明依据（例如仅新增可选参数、无公开接口变化）。
+- 变更：
+- 影响面：
+- 迁移方式：
+- 确认状态：
 
 ## 其他人需要了解
 
@@ -187,8 +222,12 @@ git log --oneline --no-merges $BASE_SHA..HEAD
 
 ## 需要人工验证
 
-| 验证项 | 步骤 | 预期结果 | 依据 |
-|---|---|---|---|
+每条按四项写：
+
+- 验证项：
+- 步骤：
+- 预期结果：
+- 依据：
 
 ## 自动化覆盖
 
@@ -203,16 +242,18 @@ git log --oneline --no-merges $BASE_SHA..HEAD
 
 ## 质量控制
 
-- 每个数字来自实际命令输出，引用命令本身
+- 每个数字来自实际命令输出，不在简报中写取法说明与命令来源
+- 简报正文不使用 markdown 表格，一律用列表
 - 主题归类与 commit message 冲突时以代码为准并标注
-- breaking change 宁可标"待确认"也不默认安全
+- breaking change 宁可标“待确认”也不默认安全
 - 人工验证项必须可执行
+- 剔除测试与文档的统计与总规模自洽，两者相加等于总量
 - 不写"改动较多""优化了性能"这类无法核对的说法
 
 ## 禁止事项
 
 - 用 commit message 代替读实际差异
 - 把未提交改动计入已提交统计
-- 静默排除生成文件而不说明
+- 把生成文件、锁文件、快照从总数里静默扣掉
 - 把内部重构描述为用户可见的变化
 - 在没有基线的情况下给出 diff 数字
